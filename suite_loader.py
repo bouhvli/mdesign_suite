@@ -10,6 +10,7 @@ class PluginSuiteLoader:
     def __init__(self, iface):
         self.iface = iface
         self.loaded_plugins = []
+        self.loaded_plugin_names = []
         self.suite_toolbar = SuiteToolbar(iface, "M Design Suite")
 
     def initGui(self):
@@ -48,6 +49,7 @@ class PluginSuiteLoader:
                     self.suite_toolbar.add_actions(actions)
 
             self.loaded_plugins.append(plugin_instance)
+            self.loaded_plugin_names.append(plugin_name)
 
         except Exception as e:
             print(f"[Suite] Failed to load {plugin_name}: {e}")
@@ -60,5 +62,22 @@ class PluginSuiteLoader:
             except Exception as e:
                 print(f"[Suite] Unload error: {e}")
 
-        self.suite_toolbar.destroy()  # ← clean destroy
+        # Safe to evict now — all Qt signals/actions have been disconnected by unload()
+        for plugin_name in self.loaded_plugin_names:
+            for key in list(sys.modules.keys()):
+                if key == plugin_name or key.startswith(plugin_name + "."):
+                    module = sys.modules[key]
+                    # Unregister Qt resources before evicting — pyrcc5-compiled modules store
+                    # raw C++ pointers to Python bytes objects. If those bytes objects are
+                    # garbage-collected while Qt still holds the pointer, the next resource
+                    # access (e.g. a message-bar icon) causes an access violation.
+                    if hasattr(module, "qCleanupResources"):
+                        try:
+                            module.qCleanupResources()
+                        except Exception:
+                            pass
+                    del sys.modules[key]
+
+        self.suite_toolbar.destroy()
         self.loaded_plugins.clear()
+        self.loaded_plugin_names.clear()

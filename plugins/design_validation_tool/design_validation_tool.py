@@ -35,6 +35,7 @@ class DesignValidationTool:
     def __init__(self, iface):
         self.iface = iface
         self.dialog = None
+        self.actions = []
         self.progress_timer = None
         self.current_progress = 0
 
@@ -47,16 +48,17 @@ class DesignValidationTool:
             QIcon(icon_path), "Design Validation Tool", self.iface.mainWindow()
         )
         self.action.triggered.connect(self.run)
-        self.iface.addToolBarIcon(self.action)
+        self.actions.append(self.action)
         self.iface.addPluginToMenu("Design Validation", self.action)
+
+    def get_actions(self):
+        return self.actions
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
         self.iface.removePluginMenu("Design Validation", self.action)
-        self.iface.removeToolBarIcon(self.action)
         if self.dialog:
             self.dialog.close()
-        self.reset_plugin()  # Ensure cleanup on unload
 
     def run(self):
         """Run method that performs all the real work"""
