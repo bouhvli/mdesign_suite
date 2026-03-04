@@ -262,6 +262,18 @@ def get_violation_details(violation):
             "details": f"Drop cable {violation.get('drop_cable_id', 'N/A')} - crosses an open span",
         }
 
+    elif violation_type == "stacked_pocs":
+        return {
+            "rule_id": "POC_008",
+            "description": "Stacked POCs at same location",
+            "violation_type": violation_type,
+            "details": (
+                f"POC {violation.get('poc_id', 'N/A')} is "
+                f"{violation.get('distance', 0):.3f}m from "
+                f"POC {violation.get('nearby_poc_id', 'N/A')} (min 1m required)"
+            ),
+        }
+
     elif violation_type == "cable_split":
         cable_layer = violation.get("cable_layer", "Distribution Cables")
         if "Primary" in cable_layer:

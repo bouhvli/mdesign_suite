@@ -1059,79 +1059,88 @@ class POCValidator:
             cable_type = str(drop_cable["TYPE"]).strip().upper()
 
             # Only check drop cables with FACADE or LENIENT type
-            if cable_type in ["FACADE", "LENIENT"]:
-                cable_geom = drop_cable.geometry()
+            if cable_type not in ["FACADE", "LENIENT"]:
+                continue
 
-                if not cable_geom or cable_geom.isEmpty():
+            cable_geom = drop_cable.geometry()
+            if not cable_geom or cable_geom.isEmpty():
+                continue
+
+            cable_id = drop_cable["CABLE_ID"]
+
+            # Use a small search buffer on the bbox to find candidate buildings,
+            # but we will buffer the buildings themselves (not the cable) so that
+            # edge-touching facade cables are properly captured.
+            search_bbox = cable_geom.boundingBox().buffered(1.0)
+            candidate_building_ids = buildings_index.intersects(search_bbox)
+
+            # Build union of buildings that are close to the cable.
+            # Buffer each building by 0.5 m to absorb snapping / digitising tolerance
+            # so that a cable sitting exactly on a building edge is covered.
+            building_union = None
+            for building_id in candidate_building_ids:
+                building_feature = buildings_layer.getFeature(building_id)
+                building_geom = building_feature.geometry()
+
+                if not building_geom or building_geom.isEmpty():
                     continue
 
-                cable_id = drop_cable["CABLE_ID"]
+                buffered_bldg = building_geom.buffer(0.5, 5)
+                if not cable_geom.intersects(buffered_bldg):
+                    continue
 
-                # Buffer the cable by 1m to allow for positioning tolerance
-                buffered_cable = cable_geom.buffer(1.0, 5)  # 1m buffer with 5 segments
-
-                # Find buildings that might intersect with the buffered cable
-                intersecting_building_ids = buildings_index.intersects(
-                    buffered_cable.boundingBox()
-                )
-
-                # Collect all building geometries that intersect with the buffered cable
-                building_union = None
-                for building_id in intersecting_building_ids:
-                    building_feature = buildings_layer.getFeature(building_id)
-                    building_geom = building_feature.geometry()
-
-                    if building_geom and not building_geom.isEmpty():
-                        if buffered_cable.intersects(building_geom):
-                            if building_union is None:
-                                building_union = building_geom
-                            else:
-                                building_union = building_union.combine(building_geom)
-
-                # Check if buffered cable is fully covered by buildings
                 if building_union is None:
-                    # Buffered cable doesn't intersect any building at all
-                    violations.append(
-                        {
-                            "drop_cable_id": cable_id,
-                            "cable_type": cable_type,
-                            "geometry": cable_geom,
-                            "violation_type": "facade_cable_crosses_gap",
-                            "violation_reason": f"Façade drop cable {cable_id} does not intersect any buildings",
-                        }
-                    )
+                    building_union = buffered_bldg
                 else:
-                    # Check if entire buffered cable is within buildings
-                    # Calculate the part of buffered cable NOT covered by buildings
-                    uncovered_part = buffered_cable.difference(building_union)
+                    building_union = building_union.combine(buffered_bldg)
 
-                    # If any part of the buffered cable is uncovered, it's crossing a gap
-                    if uncovered_part and not uncovered_part.isEmpty():
-                        uncovered_area = uncovered_part.area()
+            # ---- Project cable endpoints onto buildings and find uncovered gap ----
+            # Work directly on the cable LINE (not a buffered polygon of it).
+            # cable.difference(buildings) returns the portions of the line that
+            # do NOT lie on any building — those are the gaps.
 
-                        # Use a small area threshold to ignore tiny slivers (< 0.1 sq.m)
-                        if uncovered_area > 0.1:
-                            # Calculate uncovered length from original cable for reporting
-                            uncovered_cable_part = cable_geom.difference(building_union)
-                            uncovered_length = (
-                                uncovered_cable_part.length()
-                                if uncovered_cable_part and not uncovered_cable_part.isEmpty()
-                                else 0
-                            )
-                            total_length = cable_geom.length()
-                            gap_percentage = (uncovered_length / total_length) * 100 if total_length > 0 else 0
+            if building_union is None:
+                # Cable doesn't touch any building at all
+                violations.append(
+                    {
+                        "drop_cable_id": cable_id,
+                        "cable_type": cable_type,
+                        "uncovered_length": round(cable_geom.length(), 2),
+                        "gap_percentage": 100.0,
+                        "geometry": cable_geom,
+                        "violation_type": "facade_cable_crosses_gap",
+                        "violation_reason": (
+                            f"Façade drop cable {cable_id} does not lie on any building"
+                        ),
+                    }
+                )
+            else:
+                gap_geom = cable_geom.difference(building_union)
 
-                            violations.append(
-                                {
-                                    "drop_cable_id": cable_id,
-                                    "cable_type": cable_type,
-                                    "uncovered_length": round(uncovered_length, 2),
-                                    "gap_percentage": round(gap_percentage, 1),
-                                    "geometry": uncovered_cable_part,  # Show only the gap segment
-                                    "violation_type": "facade_cable_crosses_gap",
-                                    "violation_reason": f"Façade drop cable {cable_id} crosses a gap between buildings ({round(uncovered_length, 2)}m uncovered, {round(gap_percentage, 1)}%)",
-                                }
-                            )
+                if gap_geom and not gap_geom.isEmpty():
+                    gap_length = gap_geom.length()
+
+                    # Ignore sub-millimetre slivers from floating-point noise
+                    if gap_length > 0.01:
+                        total_length = cable_geom.length()
+                        gap_percentage = (
+                            (gap_length / total_length) * 100 if total_length > 0 else 0
+                        )
+
+                        violations.append(
+                            {
+                                "drop_cable_id": cable_id,
+                                "cable_type": cable_type,
+                                "uncovered_length": round(gap_length, 2),
+                                "gap_percentage": round(gap_percentage, 1),
+                                "geometry": gap_geom,  # Show only the gap segment
+                                "violation_type": "facade_cable_crosses_gap",
+                                "violation_reason": (
+                                    f"Façade drop cable {cable_id} crosses a gap between buildings "
+                                    f"({round(gap_length, 2)}m uncovered, {round(gap_percentage, 1)}%)"
+                                ),
+                            }
+                        )
 
         # Build result
         violation_count = len(violations)
@@ -1156,6 +1165,106 @@ class POCValidator:
         # Add to violations list
         self.violations.extend(violations)
 
+        return result
+
+    def validate_stacked_pocs(self, tolerance=0.001):
+        """
+        Validate that no two POCs occupy the same location.
+
+        Rule 8: POCs must not be stacked on top of each other.
+        Two POCs are considered stacked when their coordinates are identical
+        or within floating-point tolerance (< 0.001m).
+        Layers: Drop Points
+        """
+        print("Validating stacked POCs...")
+        description = "No two POCs should be placed at the same location (stacked)"
+
+        drop_points_layer = self.get_layer_by_name("Drop Points")
+
+        if not drop_points_layer:
+            return {
+                "rule_id": "POC_008",
+                "Description": description,
+                "status": "ERROR",
+                "violation_count": 0,
+                "failed_features": "",
+                "message": "Drop Points layer not found",
+            }
+
+        # Load all POCs, keyed by rounded coordinate to detect duplicates
+        pocs = []
+        for feature in drop_points_layer.getFeatures():
+            geom = feature.geometry()
+            if geom and not geom.isEmpty():
+                poc_id = (
+                    feature["AGG_ID"]
+                    if "AGG_ID" in feature.fields().names()
+                    else feature.id()
+                )
+                pt = geom.asPoint()
+                pocs.append(
+                    {
+                        "id": feature.id(),
+                        "poc_id": poc_id,
+                        "geometry": QgsGeometry(geom),
+                        "x": pt.x(),
+                        "y": pt.y(),
+                    }
+                )
+
+        violations = []
+        flagged_ids = set()
+
+        for i, poc_a in enumerate(pocs):
+            if poc_a["id"] in flagged_ids:
+                continue
+
+            for poc_b in pocs[i + 1 :]:
+                if poc_b["id"] in flagged_ids:
+                    continue
+
+                # Check if coordinates are identical within tolerance
+                if (
+                    abs(poc_a["x"] - poc_b["x"]) < tolerance
+                    and abs(poc_a["y"] - poc_b["y"]) < tolerance
+                ):
+                    flagged_ids.add(poc_a["id"])
+                    flagged_ids.add(poc_b["id"])
+
+                    violations.append(
+                        {
+                            "poc_id": poc_a["poc_id"],
+                            "nearby_poc_id": poc_b["poc_id"],
+                            "distance": round(
+                                poc_a["geometry"].distance(poc_b["geometry"]), 6
+                            ),
+                            "geometry": poc_a["geometry"],
+                            "violation_type": "stacked_pocs",
+                            "violation_reason": (
+                                f"POC {poc_a['poc_id']} is stacked on "
+                                f"POC {poc_b['poc_id']} at the same location"
+                            ),
+                        }
+                    )
+
+        violation_count = len(violations)
+        failed_features_str = ", ".join([f"POC_{v['poc_id']}" for v in violations])
+        message = (
+            f"Found {violation_count} POC(s) stacked at the same location."
+            if violation_count > 0
+            else "No stacked POCs found."
+        )
+
+        result = {
+            "rule_id": "POC_008",
+            "Description": description,
+            "status": "PASS" if not violations else "FAIL",
+            "violation_count": violation_count,
+            "failed_features": failed_features_str,
+            "message": message,
+        }
+
+        self.violations.extend(violations)
         return result
 
     def _calculate_relative_position(self, drop_geometry, drop_orientation, demand_geometry):

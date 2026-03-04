@@ -62,6 +62,9 @@ class ValidationEngine:
             # Rule 7: Façade drop cables crossing gaps
             poc_results.append(self.poc_validator.validate_facade_drop_cables_no_gap())
 
+            # Rule 8: Stacked POCs (POCs at the same location)
+            poc_results.append(self.poc_validator.validate_stacked_pocs())
+
             # Collect all violations
             self.all_violations.extend(self.poc_validator.violations)
             output_path = create_violation_shapefile(
