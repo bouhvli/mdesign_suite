@@ -274,6 +274,18 @@ def get_violation_details(violation):
             ),
         }
 
+    elif violation_type == "poc_not_between_buildings":
+        return {
+            "rule_id": "POC_009",
+            "description": "POC not centrally placed between served buildings",
+            "violation_type": violation_type,
+            "details": (
+                f"POC {violation.get('poc_id', 'N/A')} is "
+                f"{violation.get('offset', 0):.2f}m from centre of "
+                f"{violation.get('building_count', 0)} served buildings (max 0.5m)"
+            ),
+        }
+
     elif violation_type == "cable_split":
         cable_layer = violation.get("cable_layer", "Distribution Cables")
         if "Primary" in cable_layer:

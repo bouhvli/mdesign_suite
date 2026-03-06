@@ -1,7 +1,19 @@
 import math
 from collections import defaultdict
 
-from qgis.core import QgsGeometry, QgsProject, QgsSpatialIndex, QgsFeature  # type: ignore
+from qgis.core import (  # type: ignore
+    QgsGeometry,
+    QgsProject,
+    QgsSpatialIndex,
+    QgsFeature,
+    QgsVectorLayer,
+    QgsField,
+    QgsCategorizedSymbolRenderer,
+    QgsRendererCategory,
+    QgsMarkerSymbol,
+)
+from PyQt5.QtCore import QVariant  # type: ignore
+from PyQt5.QtGui import QColor  # type: ignore
 
 
 class POCValidator:
@@ -858,8 +870,7 @@ class POCValidator:
             poc_positions.sort(key=lambda x: x[0])
             return [poc for _, poc in poc_positions]
 
-        except Exception as e:
-            #print(f"Warning: Failed to sort POCs along single line: {e}")
+        except Exception:
             return self._fallback_sort_pocs(pocs)
 
     def _fallback_sort_pocs(self, pocs):
@@ -1054,12 +1065,34 @@ class POCValidator:
         # Create spatial index for buildings for efficient spatial queries
         buildings_index = QgsSpatialIndex(buildings_layer.getFeatures())
 
+        # Load Possible Routes layer to exempt gaps that are aerial routes
+        possible_routes_layer = self.get_layer_by_name("Possible Routes")
+        routes_index = None
+        if possible_routes_layer and "TYPE" in possible_routes_layer.fields().names():
+            routes_index = QgsSpatialIndex(possible_routes_layer.getFeatures())
+
+        def gap_is_covered_by_aerial_route(gap_geom):
+            """Return True if the gap is fully covered by AERIAL possible routes."""
+            if not routes_index or not possible_routes_layer:
+                return False
+            candidate_ids = routes_index.intersects(gap_geom.boundingBox())
+            for rid in candidate_ids:
+                route = possible_routes_layer.getFeature(rid)
+                route_type = str(route["TYPE"]).strip().upper()
+                if "BURIED" in route_type:
+                    route_geom = route.geometry()
+                    if route_geom and not route_geom.isEmpty():
+                        if gap_geom.intersects(route_geom):
+                            return True
+            return False
+
         # Check each drop cable
         for drop_cable in drop_cables_layer.getFeatures():
             cable_type = str(drop_cable["TYPE"]).strip().upper()
 
-            # Only check drop cables with FACADE or LENIENT type
-            if cable_type not in ["FACADE", "LENIENT"]:
+            # Only check drop cables whose TYPE contains FACADE or LENIENT
+            # (e.g. "FACADE,UNDERGROUND" or "LENIENT" are both valid)
+            if "FACADE" not in cable_type and "LENIENT" not in cable_type:
                 continue
 
             cable_geom = drop_cable.geometry()
@@ -1100,20 +1133,22 @@ class POCValidator:
             # do NOT lie on any building — those are the gaps.
 
             if building_union is None:
-                # Cable doesn't touch any building at all
-                violations.append(
-                    {
-                        "drop_cable_id": cable_id,
-                        "cable_type": cable_type,
-                        "uncovered_length": round(cable_geom.length(), 2),
-                        "gap_percentage": 100.0,
-                        "geometry": cable_geom,
-                        "violation_type": "facade_cable_crosses_gap",
-                        "violation_reason": (
-                            f"Façade drop cable {cable_id} does not lie on any building"
-                        ),
-                    }
-                )
+                # Cable doesn't touch any building at all — skip if the whole
+                # cable sits on an aerial possible route
+                if not gap_is_covered_by_aerial_route(cable_geom):
+                    violations.append(
+                        {
+                            "drop_cable_id": cable_id,
+                            "cable_type": cable_type,
+                            "uncovered_length": round(cable_geom.length(), 2),
+                            "gap_percentage": 100.0,
+                            "geometry": cable_geom,
+                            "violation_type": "facade_cable_crosses_gap",
+                            "violation_reason": (
+                                f"Façade drop cable {cable_id} does not lie on any building"
+                            ),
+                        }
+                    )
             else:
                 gap_geom = cable_geom.difference(building_union)
 
@@ -1122,6 +1157,10 @@ class POCValidator:
 
                     # Ignore sub-millimetre slivers from floating-point noise
                     if gap_length > 0.01:
+                        # Skip if the gap overlaps an AERIAL possible route
+                        if gap_is_covered_by_aerial_route(gap_geom):
+                            continue
+
                         total_length = cable_geom.length()
                         gap_percentage = (
                             (gap_length / total_length) * 100 if total_length > 0 else 0
@@ -1167,6 +1206,367 @@ class POCValidator:
 
         return result
 
+    def validate_poc_placement_between_buildings(self, max_offset=2.0):
+        """
+        Validate that each POC is placed centrally between the buildings it serves.
+
+        Rule 9: POC should be placed between the buildings it serves (within 0.5m of
+        the mean centre of those buildings).
+
+        Chain: POC.AGG_ID → DemandPoint.ID_DROP → Building Polygon (containment)
+        → mean centre of building centroids → distance from POC to centre.
+
+        POCs serving only one building are skipped (no "between" applies).
+        """
+        print("Validating POC placement between buildings...")
+        description = (
+            f"POC should be placed at or near the join point between the buildings "
+            f"it serves (max {max_offset}m from the nearest building-pair join)"
+        )
+
+        drop_points_layer = self.get_layer_by_name("Drop Points")
+        demand_points_layer = self.get_layer_by_name("Demand Points")
+        buildings_layer = self.get_layer_by_name("Building Polygons")
+
+        if not drop_points_layer:
+            return {
+                "rule_id": "POC_009",
+                "Description": description,
+                "status": "ERROR",
+                "violation_count": 0,
+                "failed_features": "",
+                "message": "Drop Points layer not found",
+            }
+
+        if not demand_points_layer:
+            return {
+                "rule_id": "POC_009",
+                "Description": description,
+                "status": "ERROR",
+                "violation_count": 0,
+                "failed_features": "",
+                "message": "Demand Points layer not found",
+            }
+
+        if not buildings_layer:
+            return {
+                "rule_id": "POC_009",
+                "Description": description,
+                "status": "ERROR",
+                "violation_count": 0,
+                "failed_features": "",
+                "message": "Building Polygons layer not found",
+            }
+
+        if "ID_DROP" not in demand_points_layer.fields().names():
+            return {
+                "rule_id": "POC_009",
+                "Description": description,
+                "status": "ERROR",
+                "violation_count": 0,
+                "failed_features": "",
+                "message": "Demand Points layer missing required field: ID_DROP",
+            }
+
+        if "AGG_ID" not in drop_points_layer.fields().names():
+            return {
+                "rule_id": "POC_009",
+                "Description": description,
+                "status": "ERROR",
+                "violation_count": 0,
+                "failed_features": "",
+                "message": "Drop Points layer missing required field: AGG_ID",
+            }
+
+        # Build spatial index + cache for buildings
+        buildings_index = QgsSpatialIndex(buildings_layer.getFeatures())
+        buildings_by_id = {}
+        for bldg in buildings_layer.getFeatures():
+            geom = bldg.geometry()
+            if geom and not geom.isEmpty():
+                buildings_by_id[bldg.id()] = QgsGeometry(geom)
+
+        # Group demand points by the POC they belong to (ID_DROP == POC.AGG_ID).
+        # For each demand point, resolve which building it sits inside.
+        demand_pts_by_poc = defaultdict(list)
+
+        for dp in demand_points_layer.getFeatures():
+            id_drop = dp["ID_DROP"]
+            if id_drop is None:
+                continue
+            dp_geom = dp.geometry()
+            if not dp_geom or dp_geom.isEmpty():
+                continue
+
+            # Find the building linked to this demand point.
+            # Buffer the demand point by 0.2m so points digitised
+            # slightly outside a building footprint are still matched.
+            dp_buf = dp_geom.buffer(0.2, 5)
+            candidate_ids = buildings_index.intersects(dp_buf.boundingBox())
+            building_geom = None
+            for bldg_id in candidate_ids:
+                bldg_geom = buildings_by_id.get(bldg_id)
+                if bldg_geom and bldg_geom.intersects(dp_buf):
+                    building_geom = bldg_geom
+                    break
+
+            demand_pts_by_poc[id_drop].append(building_geom)
+
+        violations = []
+
+        for poc_feature in drop_points_layer.getFeatures():
+            poc_geom = poc_feature.geometry()
+            if not poc_geom or poc_geom.isEmpty():
+                continue
+
+            poc_id = poc_feature["AGG_ID"]
+            served_buildings = demand_pts_by_poc.get(poc_id, [])
+
+            # Collect unique building geometries (deduplicate by rounded centroid key)
+            seen = set()
+            unique_bldg_geoms = []
+            for bldg_geom in served_buildings:
+                if not bldg_geom:
+                    continue
+                pt = bldg_geom.centroid().asPoint()
+                key = f"{round(pt.x(), 2)},{round(pt.y(), 2)}"
+                if key not in seen:
+                    seen.add(key)
+                    unique_bldg_geoms.append(bldg_geom)
+
+            # Need at least 2 distinct buildings to check "between"
+            if len(unique_bldg_geoms) < 2:
+                continue
+
+            # For each pair of buildings find the midpoint of the shortest
+            # connecting line — this is the point where the two buildings "join"
+            join_midpoints = []
+            for i in range(len(unique_bldg_geoms)):
+                for j in range(i + 1, len(unique_bldg_geoms)):
+                    line = unique_bldg_geoms[i].shortestLine(unique_bldg_geoms[j])
+                    pts = line.asPolyline()
+                    if len(pts) >= 2:
+                        jx = (pts[0].x() + pts[-1].x()) / 2
+                        jy = (pts[0].y() + pts[-1].y()) / 2
+                        join_midpoints.append((jx, jy))
+
+            if not join_midpoints:
+                continue
+
+            # Distance from the POC to the nearest building-pair join midpoint
+            poc_pt = poc_geom.asPoint()
+            offset = min(
+                math.sqrt((poc_pt.x() - jx) ** 2 + (poc_pt.y() - jy) ** 2)
+                for jx, jy in join_midpoints
+            )
+
+            if offset > max_offset:
+                violations.append(
+                    {
+                        "poc_id": poc_id,
+                        "building_count": len(unique_bldg_geoms),
+                        "offset": round(offset, 2),
+                        "geometry": poc_geom,
+                        "violation_type": "poc_not_between_buildings",
+                        "violation_reason": (
+                            f"POC {poc_id} is {round(offset, 2)}m from the nearest "
+                            f"building join point across its {len(unique_bldg_geoms)} "
+                            f"served buildings (max {max_offset}m)"
+                        ),
+                    }
+                )
+
+        violation_count = len(violations)
+        failed_features_str = ", ".join([f"POC_{v['poc_id']}" for v in violations])
+        message = (
+            f"Found {violation_count} POC(s) not centrally placed between their served buildings."
+            if violation_count > 0
+            else "All POCs are centrally placed between their served buildings."
+        )
+
+        result = {
+            "rule_id": "POC_009",
+            "Description": description,
+            "status": "PASS" if not violations else "FAIL",
+            "violation_count": violation_count,
+            "failed_features": failed_features_str,
+            "message": message,
+        }
+
+        self.violations.extend(violations)
+        return result
+
+    # ------------------------------------------------------------------
+    # DEBUG ONLY — remove before production
+    # ------------------------------------------------------------------
+    def debug_poc_placement_layer(self, max_offset=0.5):
+        """
+        Creates a temporary 'POC_009_Debug' point layer on the map where every
+        POC is coloured:
+          - GREEN  : PASS  (offset <= max_offset, or exempted by Possible Routes)
+          - RED    : FAIL  (offset > max_offset and not on a route)
+          - GREY   : SKIP  (serves fewer than 2 distinct buildings)
+
+        Call this from the QGIS Python console to diagnose POC_009 silently
+        passing all features.  Delete the layer and remove this method before
+        shipping to production.
+        """
+        print("[DEBUG POC_009] Building debug layer...")
+
+        drop_points_layer = self.get_layer_by_name("Drop Points")
+        demand_points_layer = self.get_layer_by_name("Demand Points")
+        buildings_layer = self.get_layer_by_name("Building Polygons")
+
+        if not drop_points_layer or not demand_points_layer or not buildings_layer:
+            print("[DEBUG POC_009] One or more required layers not found — aborting.")
+            return
+
+        # ── Buildings spatial index ───────────────────────────────────
+        buildings_index = QgsSpatialIndex(buildings_layer.getFeatures())
+        buildings_by_id = {}
+        for bldg in buildings_layer.getFeatures():
+            geom = bldg.geometry()
+            if geom and not geom.isEmpty():
+                buildings_by_id[bldg.id()] = QgsGeometry(geom)
+
+        # ── Possible Routes index ─────────────────────────────────────
+        possible_routes_layer = self.get_layer_by_name("Possible Routes")
+        routes_index = None
+        if possible_routes_layer:
+            routes_index = QgsSpatialIndex(possible_routes_layer.getFeatures())
+
+        def poc_is_on_route(poc_geom):
+            if not routes_index or not possible_routes_layer:
+                return False
+            poc_buf = poc_geom.buffer(0.5, 5)
+            for rid in routes_index.intersects(poc_buf.boundingBox()):
+                rgeom = possible_routes_layer.getFeature(rid).geometry()
+                if rgeom and not rgeom.isEmpty() and poc_buf.intersects(rgeom):
+                    return True
+            return False
+
+        # ── Demand points → buildings ─────────────────────────────────
+        demand_pts_by_poc = defaultdict(list)
+        for dp in demand_points_layer.getFeatures():
+            id_drop = dp["ID_DROP"]
+            if id_drop is None:
+                continue
+            dp_geom = dp.geometry()
+            if not dp_geom or dp_geom.isEmpty():
+                continue
+            dp_buf = dp_geom.buffer(0.2, 5)
+            candidates = buildings_index.intersects(dp_buf.boundingBox())
+            for bldg_id in candidates:
+                bldg_geom = buildings_by_id.get(bldg_id)
+                if bldg_geom and bldg_geom.intersects(dp_buf):
+                    demand_pts_by_poc[id_drop].append(bldg_geom)
+                    break
+
+        # ── Create memory layer ───────────────────────────────────────
+        crs = drop_points_layer.crs().authid()
+        mem_layer = QgsVectorLayer(f"Point?crs={crs}", "POC_009_Debug", "memory")
+        pr = mem_layer.dataProvider()
+        pr.addAttributes([
+            QgsField("poc_id",     QVariant.String),
+            QgsField("status",     QVariant.String),
+            QgsField("offset_m",   QVariant.Double),
+            QgsField("bldg_count", QVariant.Int),
+            QgsField("on_route",   QVariant.Int),
+        ])
+        mem_layer.updateFields()
+
+        features_to_add = []
+
+        # Counters for SKIP breakdown summary
+        skip_no_demand_pts = 0       # AGG_ID not found in demand_pts_by_poc at all
+        skip_none_matched  = 0       # demand points exist but 0 resolved to a building
+        skip_one_building  = 0       # all demand points map to the same single building
+
+        for poc_feature in drop_points_layer.getFeatures():
+            poc_geom = poc_feature.geometry()
+            if not poc_geom or poc_geom.isEmpty():
+                continue
+
+            poc_id = poc_feature["AGG_ID"]
+            served_buildings = demand_pts_by_poc.get(poc_id, [])
+
+            # Deduplicate buildings by rounded centroid
+            seen = set()
+            bldg_centroids = []
+            for bldg_geom in served_buildings:
+                if not bldg_geom:
+                    continue
+                pt = bldg_geom.centroid().asPoint()
+                key = f"{round(pt.x(), 2)},{round(pt.y(), 2)}"
+                if key not in seen:
+                    seen.add(key)
+                    bldg_centroids.append(pt)
+
+            f = QgsFeature(mem_layer.fields())
+            f.setGeometry(poc_geom)
+
+            if len(bldg_centroids) < 2:
+                dp_total   = len(served_buildings)
+                dp_matched = sum(1 for g in served_buildings if g is not None)
+
+                if dp_total == 0:
+                    skip_no_demand_pts += 1
+                elif dp_matched == 0:
+                    skip_none_matched += 1
+                else:
+                    skip_one_building += 1
+
+                f.setAttributes([str(poc_id), "SKIP", 0.0, len(bldg_centroids), 0])
+                features_to_add.append(f)
+                continue
+
+            avg_x = sum(pt.x() for pt in bldg_centroids) / len(bldg_centroids)
+            avg_y = sum(pt.y() for pt in bldg_centroids) / len(bldg_centroids)
+            poc_pt = poc_geom.asPoint()
+            offset = math.sqrt((poc_pt.x() - avg_x) ** 2 + (poc_pt.y() - avg_y) ** 2)
+            on_route = poc_is_on_route(poc_geom)
+
+            if offset > max_offset and not on_route:
+                status = "FAIL"
+            else:
+                status = "PASS"
+
+            f.setAttributes([str(poc_id), status, round(offset, 3), len(bldg_centroids), 1 if on_route else 0])
+            features_to_add.append(f)
+
+        pr.addFeatures(features_to_add)
+        mem_layer.updateExtents()
+
+        # ── Categorised renderer ──────────────────────────────────────
+        categories = []
+        for value, hex_color, label in [
+            ("PASS", "#00aa00", "PASS (within 0.5 m)"),
+            ("FAIL", "#dd0000", "FAIL (offset > 0.5 m)"),
+            ("SKIP", "#888888", "SKIP (< 2 buildings)"),
+        ]:
+            symbol = QgsMarkerSymbol.createSimple({"name": "circle", "size": "5"})
+            symbol.setColor(QColor(hex_color))
+            categories.append(QgsRendererCategory(value, symbol, label))
+
+        mem_layer.setRenderer(QgsCategorizedSymbolRenderer("status", categories))
+
+        QgsProject.instance().addMapLayer(mem_layer)
+        skip_total = sum(1 for f in features_to_add if f["status"] == "SKIP")
+        print(
+            f"[DEBUG POC_009] Done — layer 'POC_009_Debug' added with"
+            f" {len(features_to_add)} POCs"
+            f" ({sum(1 for f in features_to_add if f['status'] == 'FAIL')} FAIL,"
+            f" {sum(1 for f in features_to_add if f['status'] == 'PASS')} PASS,"
+            f" {skip_total} SKIP)"
+        )
+        print(
+            f"[DEBUG POC_009] SKIP breakdown:"
+            f"  no demand pts (ID mismatch?) = {skip_no_demand_pts}"
+            f"  demand pts exist but no building found = {skip_none_matched}"
+            f"  all demand pts in same 1 building = {skip_one_building}"
+        )
+
+    # ------------------------------------------------------------------
     def validate_stacked_pocs(self, tolerance=0.001):
         """
         Validate that no two POCs occupy the same location.

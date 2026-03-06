@@ -65,6 +65,9 @@ class ValidationEngine:
             # Rule 8: Stacked POCs (POCs at the same location)
             poc_results.append(self.poc_validator.validate_stacked_pocs())
 
+            # Rule 9: POC placement between served buildings
+            poc_results.append(self.poc_validator.validate_poc_placement_between_buildings(max_offset=0.5))
+
             # Collect all violations
             self.all_violations.extend(self.poc_validator.violations)
             output_path = create_violation_shapefile(
