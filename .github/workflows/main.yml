@@ -1,0 +1,141 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# M Design Suite – Release workflow
+#
+# Trigger:  push a version tag, e.g.
+#             git tag v1.2.3
+#             git push origin v1.2.3
+#
+# What it does:
+#   1. Patches the version in metadata.txt to match the tag
+#   2. Builds a clean plugin ZIP (mdesign_suite.zip)
+#   3. Creates a GitHub Release and attaches the ZIP
+#   4. Publishes plugins.xml to GitHub Pages so users can add this repo
+#      directly to QGIS Plugin Manager
+#
+# Custom QGIS repo URL (share with users):
+#   https://bouhvli.github.io/mdesign_suite/plugins.xml
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'   # e.g. v1.2.3
+
+permissions:
+  contents: write   # create GitHub Releases
+  pages: write      # push to gh-pages
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ── 2. Derive version from tag ───────────────────────────────────────────
+      - name: Extract version
+        id: vars
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}          # e.g. v1.2.3
+          VERSION=${TAG#v}                       # e.g. 1.2.3
+          echo "tag=$TAG"         >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      # ── 3. Patch metadata.txt ────────────────────────────────────────────────
+      - name: Set version in metadata.txt
+        run: |
+          sed -i "s/^version=.*/version=${{ steps.vars.outputs.version }}/" metadata.txt
+
+      # ── 4. Build clean plugin ZIP ─────────────────────────────────────────────
+      #   QGIS requires the ZIP to contain a single top-level folder whose name
+      #   matches the plugin module name (mdesign_suite/).
+      - name: Build plugin ZIP
+        run: |
+          mkdir -p dist
+
+          # Copy source into a staging folder named mdesign_suite/
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='*.pyo' \
+            --exclude='pb_tool.cfg' \
+            --exclude='.qodo' \
+            --exclude='dist' \
+            --exclude='*.md' \
+            . /tmp/mdesign_suite/
+
+          cd /tmp
+          zip -r "$GITHUB_WORKSPACE/dist/mdesign_suite.zip" mdesign_suite/
+          echo "ZIP built: $(du -sh $GITHUB_WORKSPACE/dist/mdesign_suite.zip)"
+
+      # ── 5. Generate plugins.xml for custom QGIS repository ───────────────────
+      - name: Generate plugins.xml
+        run: |
+          VERSION="${{ steps.vars.outputs.version }}"
+          TAG="${{ steps.vars.outputs.tag }}"
+          REPO="${{ github.repository }}"
+          DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/mdesign_suite.zip"
+          DATE=$(date +%Y-%m-%d)
+
+          cat > dist/plugins.xml <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <plugins>
+            <pyqgis_plugin name="M Design Suite" version="${VERSION}">
+              <description>Suite of M Design tools for cable route planning and network design in Flanders</description>
+              <about>Includes design tool, design validation, external maps loader, image identify tool, and survey app. Built for network design workflows in Flanders, Belgium.</about>
+              <version>${VERSION}</version>
+              <qgis_minimum_version>3.0</qgis_minimum_version>
+              <homepage>https://github.com/${REPO}</homepage>
+              <file_name>mdesign_suite.zip</file_name>
+              <author_name>Mdesign (Hamza Bouhali &amp; Musa Haruna)</author_name>
+              <download_url>${DOWNLOAD_URL}</download_url>
+              <create_date>${DATE}</create_date>
+              <update_date>${DATE}</update_date>
+              <experimental>False</experimental>
+              <deprecated>False</deprecated>
+              <tracker>https://github.com/${REPO}/issues</tracker>
+              <repository>https://github.com/${REPO}</repository>
+              <tags>Mdesign, design, validation, survey, network, WFS</tags>
+              <icon>icon.png</icon>
+              <category>Plugins</category>
+            </pyqgis_plugin>
+          </plugins>
+          EOF
+
+          # Add a minimal index page so GitHub Pages doesn't show a 404
+          cat > dist/index.html <<'HTMLEOF'
+          <!DOCTYPE html>
+          <html>
+          <head><title>M Design Suite – QGIS Plugin Repository</title></head>
+          <body>
+            <h2>M Design Suite – QGIS Custom Plugin Repository</h2>
+            <p>Add this URL in QGIS → Plugin Manager → Settings → Add repository:</p>
+            <pre>https://bouhvli.github.io/mdesign_suite/plugins.xml</pre>
+          </body>
+          </html>
+          HTMLEOF
+
+      # ── 6. Create GitHub Release ──────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.vars.outputs.tag }}
+          name: "v${{ steps.vars.outputs.version }}"
+          generate_release_notes: true   # auto-generates notes from commits
+          files: dist/mdesign_suite.zip
+
+      # ── 7. Publish plugins.xml to GitHub Pages ────────────────────────────────
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: dist
+          publish_branch: gh-pages
+          commit_message: "Update plugins.xml for ${{ steps.vars.outputs.tag }}"
