@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <plugins>
-  <pyqgis_plugin name="M Design Suite" version="0.1.0">
+  <pyqgis_plugin name="M Design Suite" version="1.0.3">
     <description>Suite of M Design tools for cable route planning and network design in Flanders</description>
     <about>Includes design tool, design validation, external maps loader, image identify tool, and survey app. Built for network design workflows in Flanders, Belgium.</about>
-    <version>0.1.0</version>
+    <version>1.0.3</version>
     <qgis_minimum_version>3.0</qgis_minimum_version>
     <homepage>https://github.com/bouhvli/mdesign_suite</homepage>
     <file_name>mdesign_suite.zip</file_name>
     <author_name>Mdesign (Hamza Bouhali &amp; Musa Haruna)</author_name>
-    <download_url>https://github.com/bouhvli/mdesign_suite/releases/download/v0.1.0/mdesign_suite.zip</download_url>
+    <download_url>https://github.com/bouhvli/mdesign_suite/releases/download/v1.0.3/mdesign_suite.zip</download_url>
     <create_date>2026-03-06</create_date>
     <update_date>2026-03-06</update_date>
     <experimental>False</experimental>
