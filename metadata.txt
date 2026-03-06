@@ -1,47 +1,25 @@
-# This file contains metadata for your plugin.
-
-# This file should be included when you package your plugin.# Mandatory items:
-
 [general]
-name=M design Suit
+name=M Design Suite
 qgisMinimumVersion=3.0
-description=This plugin is the suit of everything we made at Mdesign
-version=0.1
-author=Mdesign
-email=bouhali.hamza.2@gmail.com
+description=Suite of M Design tools for cable route planning and network design in Flanders
+version=0.1.0
+author=Mdesign (Hamza Bouhali & Musa Harouna)
+email=info@mdesignsolutions.be
 
-about=Provide a brief description of the plugin and its purpose.
+about=A suite of QGIS plugins for cable route planning, design validation, external map loading,
+ image identification and survey data management. Built for network design workflows in Flanders, Belgium.
 
-tracker=http://bugs
-repository=http://repo
-# End of mandatory metadata
+tracker=https://github.com/bouhvli/mdesign_suite/issues
+repository=https://github.com/bouhvli/mdesign_suite
+homepage=https://github.com/bouhvli/mdesign_suite
 
-# Recommended items:
+changelog=
+  0.1.0 - Initial release: design tool, validation tool, external maps loader, image identify tool, survey app
 
-hasProcessingProvider=no
-# Uncomment the following line and add your changelog:
-# changelog=
-
-# Tags are comma separated with spaces allowed
-tags=python
-
-homepage=http://homepage
+tags=design, validation, cable, network, WFS, Belgium, Flanders
 category=Plugins
 icon=icon.png
-# experimental flag
 experimental=False
-
-# deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
-
-# Since QGIS 3.8, a comma separated list of plugins to be installed
-# (or upgraded) can be specified.
-# Check the documentation for more information.
-# plugin_dependencies=
-
-# Category of the plugin: Raster, Vector, Database or Web
-# category=
-
-# If the plugin can run on QGIS Server.
+hasProcessingProvider=no
 server=False
-
