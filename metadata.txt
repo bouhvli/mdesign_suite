@@ -1,0 +1,25 @@
+[general]
+name=M Design Suite
+qgisMinimumVersion=3.0
+description=Suite of M Design tools for cable route planning and network design in Flanders
+version=1.0.3
+author=Mdesign (Hamza Bouhali & Musa Harouna)
+email=info@mdesignsolutions.be
+
+about=A suite of QGIS plugins for cable route planning, design validation, external map loading,
+ image identification and survey data management. Built for network design workflows in Flanders, Belgium.
+
+tracker=https://github.com/bouhvli/mdesign_suite/issues
+repository=https://github.com/bouhvli/mdesign_suite
+homepage=https://github.com/bouhvli/mdesign_suite
+
+changelog=
+  0.1.0 - Initial release: design tool, validation tool, external maps loader, image identify tool, survey app
+
+tags=design, validation, cable, network, WFS, Belgium, Flanders
+category=Plugins
+icon=icon.png
+experimental=False
+deprecated=False
+hasProcessingProvider=no
+server=False
