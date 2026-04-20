@@ -931,7 +931,7 @@ class Trenches:
         results = []
 
         # Rule 1: Subtype validation
-        results.append(self.validate_subtype_exists())
+        # results.append(self.validate_subtype_exists())
 
         # Rule 2: Trenches not well-placed
         results.append(self.validate_trenches_not_well_placed())

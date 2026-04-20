@@ -228,6 +228,9 @@ class ValidationEngine:
         lock_result = self.feature_lock_validator.validate_feature_lock_status()
         lock_results.append(lock_result)
 
+        if hasattr(self.feature_lock_validator, 'violations') and self.feature_lock_validator.violations:
+            self.all_violations.extend(self.feature_lock_validator.violations)
+
         return lock_results
     
     def data_quality_check(self):

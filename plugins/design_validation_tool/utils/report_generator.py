@@ -125,23 +125,40 @@ def _filter_tabs(rules):
 def _violation_cards(rules):
     html = ''
     for r in rules:
-        if r.get('status', '') == 'PASS':
+        status = r.get('status', '')
+        if status == 'PASS':
             continue
         cat     = _category(r.get('rule_id', ''))
         m       = _CAT.get(cat, _CAT['OTHER'])
         count   = r.get('violation_count', 0)
         rule_id = r.get('rule_id', '')
-        desc    = r.get('Description', '')
+        desc    = r.get('Description', '') or ''
+        message = r.get('message', '') or ''
         feats   = _split_features(r.get('failed_features', ''))
 
-        if cat == 'FEATURE_LOCK':
+        if status == 'ERROR' or (status != 'FAIL' and count == 0 and message):
             html += f'''
-            <div class="vcard vcard-dark vcard-wide" data-cat="{cat}">
+            <div class="vcard vcard-error" data-cat="{cat}" data-search="{rule_id.lower()} {message.lower()} {desc.lower()}">
+                <div class="vcard-head">
+                    <span class="vcard-status-pill pill-error-inline">ERROR</span>
+                    <code class="vcard-rule-id">{rule_id}</code>
+                </div>
+                <div class="vcard-headline">{message or desc or 'Rule could not be evaluated'}</div>
+                <div class="vcard-sub">Rule could not run — check required layers or fields.</div>
+            </div>'''
+            continue
+
+        if cat == 'FEATURE_LOCK':
+            sample = ', '.join(feats[:5])
+            more_lock = max(0, len(feats) - 5)
+            html += f'''
+            <div class="vcard vcard-dark vcard-wide" data-cat="{cat}" data-search="{rule_id.lower()} {message.lower()} {desc.lower()} {(r.get('failed_features','') or '').lower()}">
                 <div class="vcard-dark-inner">
                     <div>
                         <div class="vcard-dark-tag">FEATURE LOCK</div>
                         <div class="vcard-dark-rule">{rule_id}</div>
-                        <div class="vcard-dark-desc">{desc}</div>
+                        <div class="vcard-dark-desc">{message or desc}</div>
+                        {f'<div class="vcard-dark-sample">Examples: {sample}{f" (+{more_lock} more)" if more_lock else ""}</div>' if sample else ''}
                     </div>
                     <div class="vcard-dark-stat">
                         <div class="vcard-dark-count">{count}</div>
@@ -151,25 +168,50 @@ def _violation_cards(rules):
             </div>'''
             continue
 
-        MAX = 7
-        shown = feats[:MAX]
-        more  = count - len(shown)
-        chips = ''.join(f'<span class="chip">{f}</span>' for f in shown)
-        if more > 0:
-            chips += f'<span class="chip chip-more">+{more}</span>'
-        if not chips:
-            chips = f'<span class="no-features">{r.get("message","No details available")}</span>'
+        PREVIEW = 8
+        shown   = feats[:PREVIEW]
+        hidden  = feats[PREVIEW:]
+        preview_chips = ''.join(f'<span class="chip">{f}</span>' for f in shown)
+        hidden_chips  = ''.join(f'<span class="chip">{f}</span>' for f in hidden)
+        expand_btn    = ''
+        if hidden:
+            expand_btn = (
+                f'<button type="button" class="chip-toggle" onclick="toggleChips(this)">'
+                f'Show {len(hidden)} more</button>'
+            )
+        copy_payload = (r.get('failed_features', '') or '').replace('"', '&quot;')
+        copy_btn = ''
+        if feats:
+            copy_btn = (
+                f'<button type="button" class="copy-btn" '
+                f'data-copy="{copy_payload}" onclick="copyFeatures(this)" '
+                f'title="Copy feature IDs">Copy IDs</button>'
+            )
+        if not feats:
+            body = f'<div class="no-features">No feature IDs reported.</div>'
+        else:
+            body = f'''
+                <div class="chip-head">
+                    <span class="chip-label">Affected features ({count})</span>
+                    {copy_btn}
+                </div>
+                <div class="chip-row">{preview_chips}</div>
+                <div class="chip-row chip-row-hidden" style="display:none">{hidden_chips}</div>
+                {expand_btn}'''
+
+        headline = message if message else desc
+        subtext  = desc if (message and desc and message != desc) else ''
 
         html += f'''
-        <div class="vcard" data-cat="{cat}" style="--accent:{m["color"]}">
+        <div class="vcard" data-cat="{cat}" data-search="{rule_id.lower()} {message.lower()} {desc.lower()} {(r.get('failed_features','') or '').lower()}" style="--accent:{m["color"]}">
             <div class="vcard-head">
                 <div class="vcard-cat-dot" style="background:{m["color"]}"></div>
                 <code class="vcard-rule-id">{rule_id}</code>
                 <span class="vcard-count">{count}</span>
             </div>
-            <div class="vcard-desc">{desc}</div>
-            <div class="chip-label">Failed features</div>
-            <div class="chip-row">{chips}</div>
+            <div class="vcard-headline">{headline}</div>
+            {f'<div class="vcard-sub">{subtext}</div>' if subtext else ''}
+            {body}
         </div>'''
     return html
 
@@ -456,14 +498,41 @@ tr:hover td{background:#fafbfd}
     white-space:nowrap;
 }
 .vcard-desc{font-size:12px;color:#6e7890;margin-bottom:12px;line-height:1.5}
-.chip-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#9aa3b8;margin-bottom:7px}
-.chip-row{display:flex;flex-wrap:wrap;gap:5px}
+.vcard-headline{font-size:13px;font-weight:600;color:#0f1628;margin-bottom:6px;line-height:1.45}
+.vcard-sub{font-size:11px;color:#8892aa;margin-bottom:12px;line-height:1.5}
+.chip-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.chip-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#9aa3b8}
+.chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px}
 .chip{
     background:#f4f6fb;color:#4d5670;
     font-size:10px;padding:3px 9px;border-radius:5px;
+    font-family:'Consolas','Courier New',monospace;
 }
-.chip.chip-more{background:#eef1fd;color:#4f6bed;font-weight:700}
+.chip-toggle{
+    margin-top:4px;
+    background:none;border:none;cursor:pointer;
+    font-size:10px;font-weight:700;color:#4f6bed;
+    padding:2px 0;letter-spacing:.2px;
+}
+.chip-toggle:hover{text-decoration:underline}
+.copy-btn{
+    background:#f4f6fb;border:1px solid #e4e7ef;border-radius:5px;
+    color:#4d5670;font-size:9px;font-weight:700;letter-spacing:.5px;
+    padding:3px 8px;cursor:pointer;text-transform:uppercase;
+}
+.copy-btn:hover{background:#eef1fd;color:#2d4be0;border-color:#c8d2f5}
+.copy-btn.copied{background:#e6f7ee;color:#2eab6e;border-color:#b6e6cd}
 .no-features{font-size:11px;color:#9aa3b8;font-style:italic}
+.vcard-error{border-top-color:#d4820a !important}
+.vcard-status-pill{
+    display:inline-block;font-size:9px;font-weight:800;letter-spacing:.6px;
+    padding:2px 7px;border-radius:4px;margin-right:4px;
+}
+.pill-error-inline{background:#fff4e5;color:#d4820a}
+.vcard-dark-sample{
+    font-size:11px;color:rgba(255,255,255,.55);
+    margin-top:8px;font-family:'Consolas','Courier New',monospace;
+}
 
 .vcard-dark{
     background:#0f1628;color:#fff;
@@ -484,17 +553,11 @@ tr:hover td{background:#fafbfd}
 .vcard-dark-count{font-size:48px;font-weight:900;color:#fff;line-height:1;letter-spacing:-2px}
 .vcard-dark-unit{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,.35);margin-top:3px}
 
-/* ── explorer footer ── */
-.exp-footer{
-    background:#fff;border-radius:12px;padding:16px 22px;margin-top:14px;
-    box-shadow:0 1px 4px rgba(0,0,0,.06);
-    display:flex;justify-content:space-between;align-items:center;
-    flex-wrap:wrap;gap:10px;
+.vgrid-empty{
+    text-align:center;padding:40px 20px;color:#9aa3b8;
+    font-size:12px;background:#fff;border-radius:12px;
+    border:1px dashed #e4e7ef;margin-top:10px;
 }
-.footer-meta{display:flex;gap:24px;flex-wrap:wrap}
-.meta-item label{display:block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#9aa3b8;margin-bottom:2px}
-.meta-item span{font-size:12px;font-weight:600;color:#0f1628}
-.footer-note{font-size:11px;color:#9aa3b8}
 
 /* ── print ── */
 @media print{
@@ -521,6 +584,9 @@ tr:hover td{background:#fafbfd}
 # ── JS ────────────────────────────────────────────────────────────────────────
 
 _JS = """
+var _activeCat = 'all';
+var _query = '';
+
 function showPage(name) {
     document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
     document.querySelectorAll('.sb-link').forEach(function(l) { l.classList.remove('active'); });
@@ -532,16 +598,76 @@ function showPage(name) {
 function filter(cat, btn) {
     document.querySelectorAll('.tab').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
-    document.querySelectorAll('.vcard').forEach(function(c) {
-        c.style.display = (cat === 'all' || c.dataset.cat === cat) ? '' : 'none';
-    });
+    _activeCat = cat;
+    applyViolationFilter();
 }
 
-function searchRules(q) {
-    q = q.toLowerCase();
-    document.querySelectorAll('#ruleset-body tr').forEach(function(tr) {
-        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+function applyViolationFilter() {
+    var visible = 0;
+    document.querySelectorAll('.vcard').forEach(function(c) {
+        var catOk = (_activeCat === 'all' || c.dataset.cat === _activeCat);
+        var hay = (c.dataset.search || c.textContent).toLowerCase();
+        var qOk = (!_query || hay.indexOf(_query) !== -1);
+        var show = catOk && qOk;
+        c.style.display = show ? '' : 'none';
+        if (show) visible++;
     });
+    var empty = document.getElementById('vgrid-empty');
+    if (empty) empty.style.display = visible ? 'none' : 'block';
+}
+
+function onSearch(q) {
+    _query = (q || '').toLowerCase();
+    document.querySelectorAll('#ruleset-body tr').forEach(function(tr) {
+        tr.style.display = tr.textContent.toLowerCase().indexOf(_query) !== -1 ? '' : 'none';
+    });
+    applyViolationFilter();
+}
+
+function toggleChips(btn) {
+    var card = btn.closest('.vcard');
+    if (!card) return;
+    var hidden = card.querySelector('.chip-row-hidden');
+    if (!hidden) return;
+    var isHidden = hidden.style.display === 'none';
+    if (isHidden) {
+        hidden.style.display = 'flex';
+        btn.textContent = 'Show less';
+    } else {
+        hidden.style.display = 'none';
+        var n = hidden.querySelectorAll('.chip').length;
+        btn.textContent = 'Show ' + n + ' more';
+    }
+}
+
+function copyFeatures(btn) {
+    var text = btn.getAttribute('data-copy') || '';
+    var done = function() {
+        var orig = btn.textContent;
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(function() {
+            btn.textContent = orig;
+            btn.classList.remove('copied');
+        }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, function(){ fallbackCopy(text); done(); });
+    } else {
+        fallbackCopy(text);
+        done();
+    }
+}
+
+function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) {}
+    document.body.removeChild(ta);
 }
 """
 
@@ -604,7 +730,7 @@ def generate_html_report(path, output_directory, validation_results):
       </div>
       <div class="search">
         <span class="search-icon">&#9906;</span>
-        <input type="text" placeholder="Search rules&hellip;" oninput="searchRules(this.value)">
+        <input type="text" placeholder="Search rules or feature IDs&hellip;" oninput="onSearch(this.value)">
       </div>
     </div>
 
@@ -663,18 +789,18 @@ def generate_html_report(path, output_directory, validation_results):
         <div>
           <div class="exp-title">Violations Explorer</div>
           <div class="exp-desc">
-            Technical audit &mdash; schema non-compliance and topological inconsistencies
-            for the {project} network segment.
+            Failing rules only. Each card lists the affected feature IDs &mdash;
+            use the Copy IDs button to paste them into QGIS to locate features.
           </div>
         </div>
         <div class="exp-stats">
           <div class="stat-box red">
-            <div class="stat-lbl">Critical Failures</div>
+            <div class="stat-lbl">Total Violations</div>
             <div class="stat-val">{total_v}</div>
           </div>
           <div class="stat-box grey">
-            <div class="stat-lbl">Rules Evaluated</div>
-            <div class="stat-val">{n_rules}</div>
+            <div class="stat-lbl">Failing Rules</div>
+            <div class="stat-val">{sum(1 for r in rules if r.get('status','') not in ('PASS',''))}</div>
           </div>
         </div>
       </div>
@@ -691,14 +817,7 @@ def generate_html_report(path, output_directory, validation_results):
         {_violation_cards(rules)}
       </div>
 
-      <div class="exp-footer">
-        <div class="footer-meta">
-          <div class="meta-item"><label>Dataset</label><span>{project}</span></div>
-          <div class="meta-item"><label>Validation engine</label><span>MDesign Suite</span></div>
-          <div class="meta-item"><label>Generated</label><span>{timestamp}</span></div>
-        </div>
-        <div class="footer-note">All data subject to auditor verification.</div>
-      </div>
+      <div class="vgrid-empty" id="vgrid-empty" style="display:none">No violations match your search.</div>
 
     </div>
   </div>
