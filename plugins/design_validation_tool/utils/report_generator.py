@@ -5,18 +5,18 @@ from datetime import datetime
 from .extract_design_session import extract_design_session_name
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── category metadata ─────────────────────────────────────────────────────────
 
-_CATEGORY_MAP = {
-    'POC':          {'tag': 'POC',          'label': 'Placement Accuracy',     'color': '#5c6bc0'},
-    'TRENCH':       {'tag': 'TRENCH',       'label': 'Trench Integrity',       'color': '#ff7043'},
-    'DISTRIBUTION': {'tag': 'DISTRIBUTION', 'label': 'Distribution Integrity', 'color': '#42a5f5'},
-    'FEEDER':       {'tag': 'FEEDER',       'label': 'Feeder Integrity',       'color': '#ffca28'},
-    'DATA_QUALITY': {'tag': 'DATA_Q',       'label': 'Data Quality',           'color': '#26a69a'},
-    'FEATURE_LOCK': {'tag': 'FEAT. LOCK',   'label': 'Feature Lock Status',    'color': '#ab47bc'},
-    'OVERLAPPING':  {'tag': 'OVERLAP',      'label': 'Overlap Detection',      'color': '#ef5350'},
-    'CROSSINGS':    {'tag': 'CROSSINGS',    'label': 'Crossing Accuracy',      'color': '#8d6e63'},
-    'OTHER':        {'tag': 'OTHER',        'label': 'Other',                  'color': '#90a4ae'},
+_CAT = {
+    'POC':          {'tag': 'POC',          'label': 'Placement Accuracy',     'color': '#4f6bed'},
+    'TRENCH':       {'tag': 'TRENCH',       'label': 'Trench Integrity',       'color': '#e8663d'},
+    'DISTRIBUTION': {'tag': 'DISTRIBUTION', 'label': 'Distribution Integrity', 'color': '#3aa8c1'},
+    'FEEDER':       {'tag': 'FEEDER',       'label': 'Feeder Integrity',       'color': '#c8a020'},
+    'DATA_QUALITY': {'tag': 'DATA QUALITY', 'label': 'Data Quality',           'color': '#3dab7e'},
+    'FEATURE_LOCK': {'tag': 'FEAT. LOCK',   'label': 'Feature Lock',           'color': '#9b59b6'},
+    'OVERLAPPING':  {'tag': 'OVERLAP',      'label': 'Overlap Detection',      'color': '#c0392b'},
+    'CROSSINGS':    {'tag': 'CROSSINGS',    'label': 'Crossing Accuracy',      'color': '#7f8c8d'},
+    'OTHER':        {'tag': 'OTHER',        'label': 'Other',                  'color': '#95a5a6'},
 }
 
 
@@ -33,331 +33,514 @@ def _category(rule_id):
     return 'OTHER'
 
 
-def _chips_html(features_str, total):
-    if not features_str:
-        return '<span style="color:#bbb;font-size:12px;">No feature details available</span>'
-    items = [f.strip() for f in features_str.split(',') if f.strip()]
-    MAX = 6
-    shown = items[:MAX]
-    more  = total - len(shown)
-    html  = ''.join(f'<span class="chip">{f}</span>' for f in shown)
-    if more > 0:
-        html += f'<span class="chip more">+{more} more</span>'
-    return html
-
-
-def _category_score(rules, cat):
-    cat_rules = [r for r in rules if _category(r.get('rule_id','')) == cat]
-    if not cat_rules:
+def _category_pass_rate(rules, cat):
+    subset = [r for r in rules if _category(r.get('rule_id', '')) == cat]
+    if not subset:
         return 100.0
-    passing = sum(1 for r in cat_rules if r.get('status','FAIL') == 'PASS')
-    return round(passing / len(cat_rules) * 100, 1)
+    passing = sum(1 for r in subset if r.get('status', '') == 'PASS')
+    return round(passing / len(subset) * 100, 1)
+
+
+def _split_features(s):
+    if not s:
+        return []
+    return [f.strip() for f in str(s).split(',') if f.strip()]
 
 
 # ── section builders ──────────────────────────────────────────────────────────
 
-def _build_category_cards(rules):
-    cats_seen = {}
+def _category_cards(rules):
+    counts = {}
     for r in rules:
-        c = _category(r.get('rule_id',''))
-        cats_seen.setdefault(c, 0)
-        cats_seen[c] += r.get('violation_count', 0)
+        c = _category(r.get('rule_id', ''))
+        counts[c] = counts.get(c, 0) + r.get('violation_count', 0)
 
-    top3 = sorted(cats_seen.items(), key=lambda x: x[1], reverse=True)[:3]
+    top3 = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:3]
     html = ''
     for cat, _ in top3:
-        meta  = _CATEGORY_MAP.get(cat, _CATEGORY_MAP['OTHER'])
-        score = _category_score(rules, cat)
+        m     = _CAT.get(cat, _CAT['OTHER'])
+        score = _category_pass_rate(rules, cat)
         html += f'''
-        <div class="category-card" style="border-left:4px solid {meta["color"]}">
-            <div class="cat-tag" style="color:{meta["color"]}">{meta["tag"]}</div>
-            <div class="cat-name">{meta["label"]}</div>
-            <div class="cat-score">{score}%</div>
-            <div class="progress-bar">
-                <div class="progress-fill" style="width:{score}%;background:{meta["color"]}"></div>
-            </div>
+        <div class="cat-card" style="--accent:{m["color"]}">
+            <div class="cat-tag">{m["tag"]}</div>
+            <div class="cat-name">{m["label"]}</div>
+            <div class="cat-score">{score}<span class="cat-pct">%</span></div>
+            <div class="bar"><div class="bar-fill" style="width:{score}%"></div></div>
         </div>'''
     return html
 
 
-def _build_ruleset_rows(rules):
+def _ruleset_rows(rules):
     rows = ''
     for r in rules:
         status = r.get('status', 'FAIL')
         count  = r.get('violation_count', 0)
-        sc     = 'pass' if status == 'PASS' else 'fail'
-        rows += f'''
-        <tr>
-            <td><span class="rule-id">{r.get("rule_id","")}</span></td>
-            <td class="desc-cell">{r.get("Description","")}</td>
-            <td><span class="badge badge-{sc}"><span class="dot dot-{sc}"></span>{status}</span></td>
-            <td class="num-cell">{count}</td>
+        sc     = status.lower() if status in ('PASS', 'FAIL') else 'error'
+        rows  += f'''
+        <tr data-rid="{r.get("rule_id","").lower()}">
+            <td><code class="rule-id">{r.get("rule_id","")}</code></td>
+            <td class="desc">{r.get("Description","")}</td>
+            <td><span class="pill pill-{sc}">{status}</span></td>
+            <td class="num">{count}</td>
         </tr>'''
     return rows
 
 
-def _build_hotspots(rules):
-    failing = [r for r in rules if r.get('status','FAIL') != 'PASS' and r.get('violation_count',0) > 0]
-    top3    = sorted(failing, key=lambda x: x.get('violation_count',0), reverse=True)[:3]
-    html    = ''
+def _hotspot_items(rules):
+    failing = [r for r in rules
+               if r.get('status', 'FAIL') != 'PASS' and r.get('violation_count', 0) > 0]
+    top3 = sorted(failing, key=lambda x: x.get('violation_count', 0), reverse=True)[:3]
+    html = ''
     for r in top3:
-        rid   = r.get('rule_id','')
-        short = (r.get('message','') or r.get('Description',''))[:42]
+        rid   = r.get('rule_id', '')
+        note  = (r.get('message', '') or r.get('Description', ''))[:46]
         count = r.get('violation_count', 0)
         html += f'''
-        <div class="hotspot-item">
-            <div class="hotspot-count">{count}</div>
-            <div class="hotspot-info">
-                <div class="hotspot-rule">{rid}</div>
-                <div class="hotspot-desc">{short}</div>
+        <div class="hs-item">
+            <div class="hs-count">{count}</div>
+            <div class="hs-info">
+                <div class="hs-rule">{rid}</div>
+                <div class="hs-note">{note}</div>
             </div>
-            <div class="hotspot-arrow">&#8250;</div>
+            <div class="hs-arrow">&#8250;</div>
         </div>'''
     return html
 
 
-def _build_filter_tabs(rules):
+def _filter_tabs(rules):
     cats = {}
     for r in rules:
-        if r.get('status','FAIL') == 'PASS':
+        if r.get('status', '') == 'PASS':
             continue
-        c = _category(r.get('rule_id',''))
+        c = _category(r.get('rule_id', ''))
         cats[c] = cats.get(c, 0) + r.get('violation_count', 0)
+
     html = ''
-    for cat, count in cats.items():
-        meta  = _CATEGORY_MAP.get(cat, _CATEGORY_MAP['OTHER'])
-        label = meta['label']
-        html += f'<button class="tab-btn" onclick="filterViolations(\'{cat}\',this)">{label} ({count})</button>'
+    for cat, total in cats.items():
+        label = _CAT.get(cat, _CAT['OTHER'])['label']
+        html += f'<button class="tab" onclick="filter(\'{cat}\',this)">{label} <span class="tab-count">{total}</span></button>'
     return html
 
 
-def _build_violation_cards(rules):
+def _violation_cards(rules):
     html = ''
     for r in rules:
-        if r.get('status','FAIL') == 'PASS':
+        if r.get('status', '') == 'PASS':
             continue
-        cat      = _category(r.get('rule_id',''))
-        count    = r.get('violation_count', 0)
-        rule_id  = r.get('rule_id','')
-        desc     = r.get('Description','')
-        features = r.get('failed_features','')
+        cat     = _category(r.get('rule_id', ''))
+        m       = _CAT.get(cat, _CAT['OTHER'])
+        count   = r.get('violation_count', 0)
+        rule_id = r.get('rule_id', '')
+        desc    = r.get('Description', '')
+        feats   = _split_features(r.get('failed_features', ''))
 
         if cat == 'FEATURE_LOCK':
             html += f'''
-            <div class="vcard vcard-dark vcard-full" data-cat="{cat}">
-                <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div class="vcard vcard-dark vcard-wide" data-cat="{cat}">
+                <div class="vcard-dark-inner">
                     <div>
-                        <div style="font-size:22px;margin-bottom:8px;">&#128274;</div>
-                        <div class="vcard-rule">{rule_id}</div>
-                        <div class="vcard-desc" style="color:rgba(255,255,255,0.55)">{desc}</div>
+                        <div class="vcard-dark-tag">FEATURE LOCK</div>
+                        <div class="vcard-dark-rule">{rule_id}</div>
+                        <div class="vcard-dark-desc">{desc}</div>
                     </div>
-                    <div style="text-align:right">
-                        <div class="dark-count">{count}</div>
-                        <div class="dark-label">Unlocked Features</div>
+                    <div class="vcard-dark-stat">
+                        <div class="vcard-dark-count">{count}</div>
+                        <div class="vcard-dark-unit">unlocked features</div>
                     </div>
                 </div>
             </div>'''
-        else:
-            chips = _chips_html(features, count)
-            unit  = 'FAILURES'
-            html += f'''
-            <div class="vcard" data-cat="{cat}">
-                <div class="vcard-header">
-                    <div>
-                        <div class="vcard-rule">{rule_id}</div>
-                        <div class="vcard-desc">{desc}</div>
-                    </div>
-                    <span class="failure-badge">{count} {unit}</span>
-                </div>
-                <div class="features-label">Failed Features</div>
-                <div class="chip-row">{chips}</div>
-            </div>'''
+            continue
+
+        MAX = 7
+        shown = feats[:MAX]
+        more  = count - len(shown)
+        chips = ''.join(f'<span class="chip">{f}</span>' for f in shown)
+        if more > 0:
+            chips += f'<span class="chip chip-more">+{more}</span>'
+        if not chips:
+            chips = f'<span class="no-features">{r.get("message","No details available")}</span>'
+
+        html += f'''
+        <div class="vcard" data-cat="{cat}" style="--accent:{m["color"]}">
+            <div class="vcard-head">
+                <div class="vcard-cat-dot" style="background:{m["color"]}"></div>
+                <code class="vcard-rule-id">{rule_id}</code>
+                <span class="vcard-count">{count}</span>
+            </div>
+            <div class="vcard-desc">{desc}</div>
+            <div class="chip-label">Failed features</div>
+            <div class="chip-row">{chips}</div>
+        </div>'''
     return html
 
 
-# ── CSS & JS ──────────────────────────────────────────────────────────────────
+# ── CSS ───────────────────────────────────────────────────────────────────────
 
 _CSS = """
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI',Arial,sans-serif;background:#eef0f8;color:#1a1f3c}
-a{text-decoration:none;color:inherit}
 
-/* layout */
-.app{display:flex;min-height:100vh}
-.sidebar{width:230px;background:#1a1f3c;color:#fff;padding:24px 0;position:fixed;
-    height:100vh;overflow-y:auto;z-index:100}
-.main{margin-left:230px;flex:1}
+body{
+    font-family:'Segoe UI',system-ui,Arial,sans-serif;
+    background:#f0f2f7;
+    color:#1c2232;
+    font-size:13px;
+    line-height:1.5;
+}
 
-/* sidebar */
-.sb-logo{display:flex;align-items:center;gap:10px;padding:0 20px 24px;
-    border-bottom:1px solid rgba(255,255,255,.1);margin-bottom:12px}
-.sb-icon{width:36px;height:36px;background:#5c6bc0;border-radius:8px;
-    display:flex;align-items:center;justify-content:center;font-size:18px}
-.sb-name{font-size:14px;font-weight:700}
-.nav-item{display:flex;align-items:center;gap:10px;padding:13px 20px;
-    font-size:13px;color:rgba(255,255,255,.55);cursor:pointer;border-left:3px solid transparent}
-.nav-item.active,.nav-item:hover{color:#fff;background:rgba(92,107,192,.25);border-left-color:#5c6bc0}
+/* ── layout ── */
+.shell{display:flex;min-height:100vh}
 
-/* topbar */
-.topbar{background:#fff;padding:15px 32px;display:flex;align-items:center;
-    justify-content:space-between;border-bottom:1px solid #e0e0e0;
-    position:sticky;top:0;z-index:50}
-.project-name{font-size:18px;font-weight:800;color:#1a1f3c}
-.last-run{font-size:12px;color:#888;margin-left:16px}
-.search-box{display:flex;align-items:center;gap:8px;background:#f5f5f5;
-    border-radius:8px;padding:8px 14px;width:240px}
-.search-box input{border:none;background:none;outline:none;font-size:13px;width:100%}
+/* ── sidebar ── */
+.sidebar{
+    width:220px;
+    background:#0f1628;
+    color:#fff;
+    display:flex;
+    flex-direction:column;
+    position:fixed;
+    top:0;left:0;
+    height:100vh;
+    z-index:200;
+}
+.sb-brand{
+    display:flex;align-items:center;gap:10px;
+    padding:22px 20px;
+    border-bottom:1px solid rgba(255,255,255,.07);
+}
+.sb-brand-mark{
+    width:32px;height:32px;
+    background:#4f6bed;
+    border-radius:7px;
+    display:grid;place-items:center;
+    font-size:13px;font-weight:900;color:#fff;
+    letter-spacing:-1px;
+}
+.sb-brand-name{font-size:13px;font-weight:700;letter-spacing:.2px}
+.sb-nav{padding:10px 0;flex:1}
+.sb-link{
+    display:flex;align-items:center;gap:9px;
+    padding:11px 20px;
+    font-size:12px;color:rgba(255,255,255,.5);
+    cursor:pointer;
+    border-left:2px solid transparent;
+    transition:all .15s;
+}
+.sb-link:hover{color:#fff;background:rgba(255,255,255,.05)}
+.sb-link.active{
+    color:#fff;
+    background:rgba(79,107,237,.18);
+    border-left-color:#4f6bed;
+}
+.sb-link-icon{
+    width:16px;height:16px;
+    display:grid;place-items:center;
+    opacity:.7;
+    font-size:11px;
+}
+.sb-link.active .sb-link-icon{opacity:1}
 
-/* pages */
-.page{display:none;padding:28px 32px}
+/* ── main ── */
+.main{margin-left:220px;flex:1;display:flex;flex-direction:column;min-height:100vh}
+
+/* ── topbar ── */
+.topbar{
+    background:#fff;
+    padding:13px 28px;
+    display:flex;align-items:center;justify-content:space-between;
+    border-bottom:1px solid #e4e7ef;
+    position:sticky;top:0;z-index:100;
+}
+.tb-left{display:flex;align-items:baseline;gap:14px}
+.tb-project{font-size:16px;font-weight:800;color:#0f1628}
+.tb-run{font-size:11px;color:#9aa3b8}
+.search{
+    display:flex;align-items:center;gap:7px;
+    background:#f4f6fb;border:1px solid #e4e7ef;
+    border-radius:7px;padding:6px 12px;
+}
+.search input{
+    border:none;background:none;outline:none;
+    font-size:12px;color:#1c2232;width:200px;
+}
+.search-icon{color:#9aa3b8;font-size:13px}
+
+/* ── pages ── */
+.page{display:none;padding:24px 28px}
 .page.active{display:block}
 
-/* dashboard – metrics row */
-.metrics-row{display:flex;gap:18px;margin-bottom:22px;flex-wrap:wrap}
-.score-card{background:#fff;border-radius:14px;padding:28px;min-width:210px;
-    box-shadow:0 2px 10px rgba(0,0,0,.06);display:flex;flex-direction:column}
-.score-label{font-size:11px;font-weight:600;text-transform:uppercase;
-    color:#999;letter-spacing:1px;margin-bottom:10px}
-.score-value{font-size:54px;font-weight:900;color:#1a1f3c;line-height:1}
-.score-suffix{font-size:24px;font-weight:400}
-.viol-label{font-size:10px;text-transform:uppercase;color:#bbb;letter-spacing:1px;margin-top:14px}
-.viol-count{font-size:30px;font-weight:700;color:#ef5350;display:inline}
-.viol-delta{display:inline-block;background:#fce4ec;color:#ef5350;
-    font-size:11px;padding:3px 8px;border-radius:10px;margin-left:8px}
+/* ── dashboard: top row ── */
+.top-row{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
 
-.category-card{background:#fff;border-radius:14px;padding:20px 22px;flex:1;min-width:150px;
-    box-shadow:0 2px 10px rgba(0,0,0,.06)}
-.cat-tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
-.cat-name{font-size:13px;color:#666;margin-bottom:6px}
-.cat-score{font-size:28px;font-weight:800;color:#1a1f3c;margin-bottom:10px}
-.progress-bar{height:4px;background:#e0e0e0;border-radius:2px;overflow:hidden}
-.progress-fill{height:100%;border-radius:2px}
+.score-card{
+    background:#fff;border-radius:12px;padding:26px 28px;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);
+    min-width:200px;
+    display:flex;flex-direction:column;justify-content:space-between;
+}
+.score-label{
+    font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:1.2px;color:#9aa3b8;margin-bottom:12px;
+}
+.score-body{display:flex;align-items:flex-end;justify-content:space-between}
+.score-number{
+    font-size:52px;font-weight:900;color:#0f1628;line-height:1;
+    letter-spacing:-2px;
+}
+.score-pct{font-size:22px;font-weight:400;letter-spacing:0}
+.score-shield{
+    width:56px;height:56px;
+    border:3px solid #e8ebf5;border-radius:50%;
+    display:grid;place-items:center;
+    color:#c8cfe8;font-size:22px;font-weight:900;
+}
+.score-foot{margin-top:14px;padding-top:12px;border-top:1px solid #f0f2f7}
+.score-foot-label{
+    font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:1px;color:#9aa3b8;margin-bottom:3px;
+}
+.score-viol{font-size:26px;font-weight:800;color:#d94040}
 
-/* dashboard – bottom row */
-.bottom-row{display:flex;gap:18px}
-.ruleset-panel{background:#fff;border-radius:14px;padding:24px;flex:1;
-    box-shadow:0 2px 10px rgba(0,0,0,.06);overflow:hidden}
-.panel-title{font-size:16px;font-weight:700;margin-bottom:4px}
-.panel-sub{font-size:12px;color:#999;margin-bottom:18px}
+.cat-card{
+    background:#fff;border-radius:12px;padding:20px 20px 16px;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);flex:1;min-width:140px;
+    border-top:3px solid var(--accent,#4f6bed);
+}
+.cat-tag{
+    font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:1.2px;color:var(--accent,#4f6bed);margin-bottom:10px;
+}
+.cat-name{font-size:12px;color:#6e7890;margin-bottom:6px}
+.cat-score{font-size:26px;font-weight:800;color:#0f1628;line-height:1;margin-bottom:10px}
+.cat-pct{font-size:15px;font-weight:400}
+.bar{height:3px;background:#eef0f7;border-radius:2px;overflow:hidden}
+.bar-fill{height:100%;background:var(--accent,#4f6bed);border-radius:2px;transition:width .4s}
+
+/* ── dashboard: bottom row ── */
+.bottom-row{display:flex;gap:16px;align-items:flex-start}
+
+.ruleset-card{
+    background:#fff;border-radius:12px;padding:22px 24px;flex:1;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);overflow:hidden;
+}
+.card-title{font-size:14px;font-weight:700;color:#0f1628;margin-bottom:3px}
+.card-sub{font-size:11px;color:#9aa3b8;margin-bottom:18px}
+
 table{width:100%;border-collapse:collapse}
-th{font-size:10px;text-transform:uppercase;color:#bbb;letter-spacing:1px;
-    padding:8px 12px;text-align:left;border-bottom:1px solid #f0f0f0}
-td{padding:11px 12px;font-size:13px;border-bottom:1px solid #f8f8f8;color:#444}
+th{
+    font-size:9px;font-weight:700;text-transform:uppercase;
+    letter-spacing:1px;color:#9aa3b8;
+    padding:7px 10px;text-align:left;
+    border-bottom:1px solid #f0f2f7;
+}
+td{padding:10px;font-size:12px;border-bottom:1px solid #f8f9fc;color:#3d4761}
 tr:last-child td{border-bottom:none}
-.rule-id{font-family:monospace;font-weight:700;color:#3f51b5;font-size:12px}
-.desc-cell{color:#555;max-width:280px}
-.num-cell{font-weight:700;color:#1a1f3c}
-.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;
-    border-radius:10px;font-size:11px;font-weight:600}
-.badge-fail{background:#fdecea;color:#ef5350}
-.badge-pass{background:#e8f5e9;color:#4caf50}
-.badge-error{background:#fff3e0;color:#ff9800}
-.dot{width:6px;height:6px;border-radius:50%}
-.dot-fail{background:#ef5350}
-.dot-pass{background:#4caf50}
-.dot-error{background:#ff9800}
+tr:hover td{background:#fafbfd}
+.rule-id{
+    font-family:'Consolas','Courier New',monospace;
+    font-size:11px;font-weight:700;color:#2d4be0;
+    background:#eef1fd;padding:2px 6px;border-radius:4px;
+}
+.desc{color:#4d5670;max-width:260px}
+.num{font-weight:700;color:#0f1628;text-align:right}
 
-/* hotspots */
-.hotspots-panel{background:#fff;border-radius:14px;padding:24px;width:300px;
-    box-shadow:0 2px 10px rgba(0,0,0,.06);flex-shrink:0}
-.hs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
-.hs-title{font-size:16px;font-weight:700}
-.hs-warn{color:#ff9800;font-size:20px}
-.hotspot-item{display:flex;align-items:center;gap:12px;padding:12px 0;
-    border-bottom:1px solid #f5f5f5;cursor:pointer}
-.hotspot-item:last-of-type{border-bottom:none}
-.hotspot-count{background:#fdecea;color:#ef5350;font-size:16px;font-weight:800;
-    min-width:52px;height:52px;border-radius:10px;
-    display:flex;align-items:center;justify-content:center}
-.hotspot-info{flex:1;overflow:hidden}
-.hotspot-rule{font-size:13px;font-weight:700;color:#1a1f3c}
-.hotspot-desc{font-size:11px;color:#888;margin-top:2px;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hotspot-arrow{color:#ccc;font-size:18px}
-.view-all{display:block;text-align:center;font-size:12px;color:#5c6bc0;margin-top:14px;cursor:pointer}
+.pill{
+    display:inline-flex;align-items:center;gap:4px;
+    padding:2px 9px;border-radius:999px;
+    font-size:10px;font-weight:700;letter-spacing:.3px;
+}
+.pill::before{
+    content:'';width:5px;height:5px;border-radius:50%;
+}
+.pill-pass{background:#e6f7ee;color:#2eab6e}
+.pill-pass::before{background:#2eab6e}
+.pill-fail{background:#fceaea;color:#d94040}
+.pill-fail::before{background:#d94040}
+.pill-error{background:#fff4e5;color:#d4820a}
+.pill-error::before{background:#d4820a}
 
-/* violations explorer */
-.exp-title{font-size:28px;font-weight:800;margin-bottom:6px}
-.exp-desc{font-size:13px;color:#666;max-width:500px}
-.exp-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap;gap:12px}
-.stat-boxes{display:flex;gap:12px}
-.stat-box{background:#fff;border-radius:10px;padding:14px 22px;min-width:150px;
-    box-shadow:0 2px 10px rgba(0,0,0,.06)}
-.stat-box.crit{background:#fdecea}
-.sb-lbl{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#bbb;margin-bottom:4px}
-.stat-box.crit .sb-lbl{color:#ef9a9a}
-.sb-val{font-size:32px;font-weight:900;color:#1a1f3c}
-.stat-box.crit .sb-val{color:#ef5350}
-
-.tabs{display:flex;gap:8px;margin-bottom:22px;flex-wrap:wrap;align-items:center}
-.tab-btn{padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;
-    border:none;cursor:pointer;background:#fff;color:#555}
-.tab-btn.active{background:#1a1f3c;color:#fff}
-.tab-btn:hover:not(.active){background:#dde1f7}
-.export-btn{margin-left:auto;padding:8px 18px;border-radius:8px;border:1px solid #ddd;
-    background:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px}
-
-.vgrid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-.vcard{background:#fff;border-radius:14px;padding:22px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
-.vcard-dark{background:#1a1f3c;color:#fff}
-.vcard-full{grid-column:1/-1}
-.vcard-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:8px}
-.vcard-rule{font-size:15px;font-weight:700;margin-bottom:5px}
-.vcard-desc{font-size:12px;color:#888;line-height:1.5;margin-bottom:14px}
-.failure-badge{background:#fdecea;color:#ef5350;font-size:10px;font-weight:700;
-    padding:4px 10px;border-radius:10px;white-space:nowrap;flex-shrink:0}
-.features-label{font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#bbb;margin-bottom:8px}
-.chip-row{display:flex;flex-wrap:wrap;gap:6px}
-.chip{background:#f0f0f0;color:#555;font-size:11px;padding:4px 10px;border-radius:6px}
-.chip.more{background:#e8eaf6;color:#5c6bc0;font-weight:700;cursor:pointer}
-.dark-count{font-size:52px;font-weight:900;color:#fff;line-height:1}
-.dark-label{font-size:11px;text-transform:uppercase;letter-spacing:1px;
-    color:rgba(255,255,255,.45);margin-top:4px}
-
-/* footer */
-.exp-footer{background:#fff;border-radius:14px;padding:18px 26px;margin-top:18px;
+/* ── hotspots ── */
+.hotspots-card{
+    background:#fff;border-radius:12px;padding:22px 20px;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);width:280px;flex-shrink:0;
+}
+.hs-header{
     display:flex;justify-content:space-between;align-items:center;
-    box-shadow:0 2px 10px rgba(0,0,0,.06);font-size:12px;color:#888;flex-wrap:wrap;gap:10px}
-.footer-meta{display:flex;gap:28px;flex-wrap:wrap}
-.meta-item label{display:block;text-transform:uppercase;letter-spacing:1px;
-    font-size:10px;color:#bbb;margin-bottom:2px}
-.meta-item span{font-weight:700;color:#333}
+    margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #f0f2f7;
+}
+.hs-title-text{font-size:14px;font-weight:700;color:#0f1628}
+.hs-warn-dot{
+    width:8px;height:8px;border-radius:50%;background:#d4820a;
+    box-shadow:0 0 0 3px #fff4e5;
+}
+.hs-item{
+    display:flex;align-items:center;gap:10px;
+    padding:10px 0;border-bottom:1px solid #f8f9fc;
+}
+.hs-item:last-of-type{border-bottom:none}
+.hs-count{
+    background:#fceaea;color:#d94040;
+    font-size:14px;font-weight:800;
+    min-width:46px;height:46px;border-radius:9px;
+    display:grid;place-items:center;flex-shrink:0;
+}
+.hs-info{flex:1;overflow:hidden}
+.hs-rule{font-size:12px;font-weight:700;color:#0f1628;margin-bottom:1px}
+.hs-note{
+    font-size:10px;color:#9aa3b8;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.hs-arrow{color:#c8cfe8;font-size:18px;flex-shrink:0}
+.hs-foot{
+    margin-top:12px;padding-top:10px;border-top:1px solid #f0f2f7;
+    text-align:center;
+}
+.hs-foot a{font-size:11px;color:#4f6bed;cursor:pointer;font-weight:600}
 
-/* print */
+/* ── violations explorer ── */
+.exp-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:22px;flex-wrap:wrap;gap:12px}
+.exp-title{font-size:26px;font-weight:900;color:#0f1628;letter-spacing:-.5px;margin-bottom:5px}
+.exp-desc{font-size:12px;color:#6e7890;max-width:480px;line-height:1.6}
+
+.exp-stats{display:flex;gap:10px}
+.stat-box{border-radius:10px;padding:13px 18px;min-width:140px}
+.stat-box.red{background:#fceaea}
+.stat-box.grey{background:#fff;border:1px solid #e4e7ef}
+.stat-lbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px}
+.stat-box.red .stat-lbl{color:#d94040}
+.stat-box.grey .stat-lbl{color:#9aa3b8}
+.stat-val{font-size:30px;font-weight:900;line-height:1;letter-spacing:-1px}
+.stat-box.red .stat-val{color:#d94040}
+.stat-box.grey .stat-val{color:#0f1628}
+
+.tabs-row{display:flex;gap:6px;margin-bottom:20px;flex-wrap:wrap;align-items:center}
+.tab{
+    padding:7px 14px;border-radius:7px;
+    border:1px solid #e4e7ef;
+    background:#fff;color:#6e7890;
+    font-size:12px;font-weight:500;cursor:pointer;
+    display:flex;align-items:center;gap:6px;
+}
+.tab:hover:not(.active){background:#f4f6fb;border-color:#c8cfe8}
+.tab.active{background:#0f1628;color:#fff;border-color:#0f1628}
+.tab-count{
+    background:rgba(255,255,255,.15);
+    font-size:10px;font-weight:700;
+    padding:1px 6px;border-radius:999px;
+}
+.tab:not(.active) .tab-count{background:#f0f2f7;color:#4d5670}
+.export-btn{
+    margin-left:auto;
+    padding:7px 16px;border-radius:7px;border:1px solid #e4e7ef;
+    background:#fff;font-size:12px;font-weight:600;cursor:pointer;
+    color:#0f1628;
+}
+.export-btn:hover{background:#f4f6fb}
+
+.vgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+.vcard{
+    background:#fff;border-radius:12px;padding:18px 20px;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);
+    border-top:3px solid var(--accent,#4f6bed);
+}
+.vcard-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.vcard-cat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.vcard-rule-id{
+    font-family:'Consolas','Courier New',monospace;
+    font-size:12px;font-weight:700;color:#0f1628;flex:1;
+}
+.vcard-count{
+    background:#fceaea;color:#d94040;
+    font-size:10px;font-weight:700;
+    padding:2px 8px;border-radius:999px;
+    white-space:nowrap;
+}
+.vcard-desc{font-size:12px;color:#6e7890;margin-bottom:12px;line-height:1.5}
+.chip-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#9aa3b8;margin-bottom:7px}
+.chip-row{display:flex;flex-wrap:wrap;gap:5px}
+.chip{
+    background:#f4f6fb;color:#4d5670;
+    font-size:10px;padding:3px 9px;border-radius:5px;
+}
+.chip.chip-more{background:#eef1fd;color:#4f6bed;font-weight:700}
+.no-features{font-size:11px;color:#9aa3b8;font-style:italic}
+
+.vcard-dark{
+    background:#0f1628;color:#fff;
+    border-top:none;
+    grid-column:1/-1;
+}
+.vcard-wide{grid-column:1/-1}
+.vcard-dark-inner{
+    display:flex;justify-content:space-between;align-items:center;gap:24px;
+}
+.vcard-dark-tag{
+    font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;
+    color:rgba(255,255,255,.4);margin-bottom:6px;
+}
+.vcard-dark-rule{font-size:16px;font-weight:800;color:#fff;margin-bottom:5px}
+.vcard-dark-desc{font-size:12px;color:rgba(255,255,255,.5);max-width:420px;line-height:1.5}
+.vcard-dark-stat{text-align:right;flex-shrink:0}
+.vcard-dark-count{font-size:48px;font-weight:900;color:#fff;line-height:1;letter-spacing:-2px}
+.vcard-dark-unit{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:rgba(255,255,255,.35);margin-top:3px}
+
+/* ── explorer footer ── */
+.exp-footer{
+    background:#fff;border-radius:12px;padding:16px 22px;margin-top:14px;
+    box-shadow:0 1px 4px rgba(0,0,0,.06);
+    display:flex;justify-content:space-between;align-items:center;
+    flex-wrap:wrap;gap:10px;
+}
+.footer-meta{display:flex;gap:24px;flex-wrap:wrap}
+.meta-item label{display:block;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#9aa3b8;margin-bottom:2px}
+.meta-item span{font-size:12px;font-weight:600;color:#0f1628}
+.footer-note{font-size:11px;color:#9aa3b8}
+
+/* ── print ── */
 @media print{
     .sidebar{display:none}
     .main{margin-left:0}
     .topbar{position:static}
+    .tabs-row,.export-btn{display:none !important}
     .page{display:block !important}
     #page-explorer{page-break-before:always}
-    .tabs,.export-btn{display:none !important}
     .vgrid{grid-template-columns:1fr 1fr}
     .bottom-row{flex-wrap:wrap}
-    .hotspots-panel{width:100%}
-    @page{margin:1.2cm}
+    .hotspots-card{width:100%}
+    @page{margin:1.2cm;size:A4}
 }
 
-@media(max-width:860px){
+@media(max-width:880px){
+    .top-row,.bottom-row{flex-direction:column}
     .vgrid{grid-template-columns:1fr}
-    .metrics-row{flex-direction:column}
-    .bottom-row{flex-direction:column}
-    .hotspots-panel{width:100%}
+    .hotspots-card{width:100%}
+    .score-card{min-width:unset}
 }
 """
 
+# ── JS ────────────────────────────────────────────────────────────────────────
+
 _JS = """
 function showPage(name) {
-    document.querySelectorAll('.page').forEach(function(p){p.classList.remove('active');});
-    document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('active');});
+    document.querySelectorAll('.page').forEach(function(p) { p.classList.remove('active'); });
+    document.querySelectorAll('.sb-link').forEach(function(l) { l.classList.remove('active'); });
     document.getElementById('page-' + name).classList.add('active');
     var idx = name === 'dashboard' ? 0 : 1;
-    document.querySelectorAll('.nav-item')[idx].classList.add('active');
+    document.querySelectorAll('.sb-link')[idx].classList.add('active');
 }
-function filterViolations(cat, btn) {
-    document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
+
+function filter(cat, btn) {
+    document.querySelectorAll('.tab').forEach(function(b) { b.classList.remove('active'); });
     btn.classList.add('active');
-    document.querySelectorAll('.vcard').forEach(function(card){
-        card.style.display = (cat === 'all' || card.dataset.cat === cat) ? '' : 'none';
+    document.querySelectorAll('.vcard').forEach(function(c) {
+        c.style.display = (cat === 'all' || c.dataset.cat === cat) ? '' : 'none';
+    });
+}
+
+function searchRules(q) {
+    q = q.toLowerCase();
+    document.querySelectorAll('#ruleset-body tr').forEach(function(tr) {
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
     });
 }
 """
@@ -368,9 +551,9 @@ function filterViolations(cat, btn) {
 def generate_csv_report(path, output_directory, validation_results):
     report_path = f"validation_report_{extract_design_session_name(path)}.csv"
     output_path = os.path.join(output_directory, report_path)
-    with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
+    with open(output_path, 'w', newline='', encoding='utf-8') as f:
         fieldnames = ['rule_id', 'Description', 'status', 'violation_count', 'failed_features', 'message']
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for result in validation_results:
             writer.writerow(result)
@@ -378,199 +561,154 @@ def generate_csv_report(path, output_directory, validation_results):
 
 
 def generate_html_report(path, output_directory, validation_results):
-    timestamp   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    project     = extract_design_session_name(path)
-    rules       = validation_results or []
+    timestamp  = datetime.now().strftime("%Y-%m-%d %H:%M")
+    project    = extract_design_session_name(path)
+    rules      = validation_results or []
 
-    total_v     = sum(r.get('violation_count', 0) for r in rules)
-    n_rules     = len(rules)
-    n_pass      = sum(1 for r in rules if r.get('status','') == 'PASS')
-    score       = round(n_pass / n_rules * 100, 1) if n_rules else 0.0
-
-    cat_cards   = _build_category_cards(rules)
-    ruleset     = _build_ruleset_rows(rules)
-    hotspots    = _build_hotspots(rules)
-    filter_tabs = _build_filter_tabs(rules)
-    vcards      = _build_violation_cards(rules)
+    n_rules    = len(rules)
+    n_pass     = sum(1 for r in rules if r.get('status', '') == 'PASS')
+    score      = round(n_pass / n_rules * 100, 1) if n_rules else 0.0
+    total_v    = sum(r.get('violation_count', 0) for r in rules)
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Validation Report – {project}</title>
+<title>Validation Report &mdash; {project}</title>
 <style>{_CSS}</style>
 </head>
 <body>
-<div class="app">
+<div class="shell">
 
-  <!-- SIDEBAR -->
   <nav class="sidebar">
-    <div class="sb-logo">
-      <div class="sb-icon">&#9873;</div>
-      <span class="sb-name">Validation Engine</span>
+    <div class="sb-brand">
+      <div class="sb-brand-mark">VE</div>
+      <span class="sb-brand-name">Validation Engine</span>
     </div>
-    <a class="nav-item active" href="#" onclick="showPage('dashboard');return false;">
-      &#9632;&nbsp; Dashboard
-    </a>
-    <a class="nav-item" href="#" onclick="showPage('explorer');return false;">
-      &#9783;&nbsp; Violations Explorer
-    </a>
+    <div class="sb-nav">
+      <a class="sb-link active" href="#" onclick="showPage('dashboard');return false;">
+        <span class="sb-link-icon">&#9632;</span> Dashboard
+      </a>
+      <a class="sb-link" href="#" onclick="showPage('explorer');return false;">
+        <span class="sb-link-icon">&#9783;</span> Violations Explorer
+      </a>
+    </div>
   </nav>
 
-  <!-- MAIN -->
   <div class="main">
-
-    <!-- TOPBAR -->
     <div class="topbar">
-      <div style="display:flex;align-items:center">
-        <span class="project-name">{project}</span>
-        <span class="last-run">&#128197; Generated: {timestamp}</span>
+      <div class="tb-left">
+        <span class="tb-project">{project}</span>
+        <span class="tb-run">Generated: {timestamp}</span>
       </div>
-      <div class="search-box">
-        <span>&#128269;</span>
-        <input type="text" placeholder="Search violation rules&hellip;"
-               oninput="searchRules(this.value)">
+      <div class="search">
+        <span class="search-icon">&#9906;</span>
+        <input type="text" placeholder="Search rules&hellip;" oninput="searchRules(this.value)">
       </div>
     </div>
 
-    <!-- ═══════════════════════════════════════ DASHBOARD PAGE -->
+    <!-- DASHBOARD -->
     <div class="page active" id="page-dashboard">
 
-      <!-- metrics row -->
-      <div class="metrics-row">
-
-        <!-- score card -->
+      <div class="top-row">
         <div class="score-card">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start">
-            <div>
-              <div class="score-label">Overall Integrity Score</div>
-              <div class="score-value">{score}<span class="score-suffix">%</span></div>
-            </div>
-            <div style="font-size:64px;color:#e8eaf6;line-height:1">&#10003;</div>
+          <div class="score-label">Overall Integrity Score</div>
+          <div class="score-body">
+            <div class="score-number">{score}<span class="score-pct">%</span></div>
+            <div class="score-shield">&#10003;</div>
           </div>
-          <div class="viol-label">Violations Detected</div>
-          <div>
-            <span class="viol-count">{total_v}</span>
+          <div class="score-foot">
+            <div class="score-foot-label">Violations Detected</div>
+            <div class="score-viol">{total_v}</div>
           </div>
         </div>
-
-        <!-- category cards -->
-        {cat_cards}
+        {_category_cards(rules)}
       </div>
 
-      <!-- bottom row -->
       <div class="bottom-row">
-
-        <!-- ruleset table -->
-        <div class="ruleset-panel">
-          <div class="panel-title">Validation Ruleset</div>
-          <div class="panel-sub">Compliance monitoring for {project} dataset</div>
+        <div class="ruleset-card">
+          <div class="card-title">Validation Ruleset</div>
+          <div class="card-sub">Compliance monitoring &mdash; {project}</div>
           <table>
             <thead>
               <tr>
-                <th>Rule ID</th>
-                <th>Description</th>
-                <th>Status</th>
-                <th>Violations</th>
+                <th>Rule ID</th><th>Description</th><th>Status</th><th style="text-align:right">Violations</th>
               </tr>
             </thead>
             <tbody id="ruleset-body">
-              {ruleset}
+              {_ruleset_rows(rules)}
             </tbody>
           </table>
         </div>
 
-        <!-- hotspots -->
-        <div class="hotspots-panel">
+        <div class="hotspots-card">
           <div class="hs-header">
-            <span class="hs-title">Critical Hotspots</span>
-            <span class="hs-warn">&#9888;</span>
+            <span class="hs-title-text">Critical Hotspots</span>
+            <div class="hs-warn-dot"></div>
           </div>
-          {hotspots}
-          <a class="view-all" href="#"
-             onclick="showPage('explorer');return false;">View All Critical Failure Logs</a>
+          {_hotspot_items(rules)}
+          <div class="hs-foot">
+            <a href="#" onclick="showPage('explorer');return false;">View all failure logs</a>
+          </div>
         </div>
       </div>
+
     </div>
 
-    <!-- ═══════════════════════════════════════ VIOLATIONS EXPLORER PAGE -->
+    <!-- VIOLATIONS EXPLORER -->
     <div class="page" id="page-explorer">
 
-      <div class="exp-top">
+      <div class="exp-header">
         <div>
           <div class="exp-title">Violations Explorer</div>
           <div class="exp-desc">
-            Technical audit focusing on schema non-compliance and topological
-            inconsistencies for the {project} network segment.
+            Technical audit &mdash; schema non-compliance and topological inconsistencies
+            for the {project} network segment.
           </div>
         </div>
-        <div class="stat-boxes">
-          <div class="stat-box crit">
-            <div class="sb-lbl">Critical Failures</div>
-            <div class="sb-val">{total_v}</div>
+        <div class="exp-stats">
+          <div class="stat-box red">
+            <div class="stat-lbl">Critical Failures</div>
+            <div class="stat-val">{total_v}</div>
           </div>
-          <div class="stat-box">
-            <div class="sb-lbl">Rules Evaluated</div>
-            <div class="sb-val">{n_rules}</div>
+          <div class="stat-box grey">
+            <div class="stat-lbl">Rules Evaluated</div>
+            <div class="stat-val">{n_rules}</div>
           </div>
         </div>
       </div>
 
-      <!-- filter tabs -->
-      <div class="tabs">
-        <button class="tab-btn active"
-                onclick="filterViolations('all',this)">All Violations</button>
-        {filter_tabs}
-        <button class="export-btn" onclick="window.print()">
-          &#8595; Export Log
+      <div class="tabs-row">
+        <button class="tab active" onclick="filter('all',this)">
+          All Violations <span class="tab-count">{total_v}</span>
         </button>
+        {_filter_tabs(rules)}
+        <button class="export-btn" onclick="window.print()">Export PDF</button>
       </div>
 
-      <!-- violation cards -->
       <div class="vgrid" id="vgrid">
-        {vcards}
+        {_violation_cards(rules)}
       </div>
 
-      <!-- footer -->
       <div class="exp-footer">
         <div class="footer-meta">
-          <div class="meta-item">
-            <label>Data Source</label>
-            <span>{project}</span>
-          </div>
-          <div class="meta-item">
-            <label>Evaluation Logic</label>
-            <span>Design validation plugin</span>
-          </div>
-          <div class="meta-item">
-            <label>Generated</label>
-            <span>{timestamp}</span>
-          </div>
+          <div class="meta-item"><label>Dataset</label><span>{project}</span></div>
+          <div class="meta-item"><label>Validation engine</label><span>MDesign Suite</span></div>
+          <div class="meta-item"><label>Generated</label><span>{timestamp}</span></div>
         </div>
-        <div style="color:#bbb;font-size:12px">
-          All technical data is subject to auditor verification. &#9432;
-        </div>
+        <div class="footer-note">All data subject to auditor verification.</div>
       </div>
+
     </div>
-
-  </div><!-- /main -->
-</div><!-- /app -->
-
-<script>
-{_JS}
-function searchRules(q) {{
-    q = q.toLowerCase();
-    document.querySelectorAll('#ruleset-body tr').forEach(function(tr) {{
-        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
-    }});
-}}
-</script>
+  </div>
+</div>
+<script>{_JS}</script>
 </body>
 </html>"""
 
-    report_name = f"validation_report_{project}.html"
-    output_path = os.path.join(output_directory, report_name)
-    with open(output_path, 'w', encoding='utf-8') as f:
+    name = f"validation_report_{project}.html"
+    out  = os.path.join(output_directory, name)
+    with open(out, 'w', encoding='utf-8') as f:
         f.write(html)
-    return output_path
+    return out
