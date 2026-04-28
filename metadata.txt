@@ -2,7 +2,7 @@
 name=M Design Suite
 qgisMinimumVersion=3.0
 description=Suite of M Design tools for cable route planning and network design in Flanders
-version=0.1.0
+version=1.0.3
 author=Mdesign (Hamza Bouhali & Musa Harouna)
 email=info@mdesignsolutions.be
 

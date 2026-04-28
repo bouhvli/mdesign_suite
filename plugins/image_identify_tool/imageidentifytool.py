@@ -26,7 +26,6 @@ from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, Qt # type
 from qgis.PyQt.QtGui import QIcon # type: ignore
 from qgis.PyQt.QtWidgets import QAction # type: ignore
 
-from .resources import *
 from .imageidentifytool_dialog import ImageIdentifyDockWidget
 from .image_identify_tool import ImageIdentifyMapTool
 

@@ -42,8 +42,6 @@ from qgis.PyQt.QtGui import QIcon  # type: ignore
 from qgis.PyQt.QtWidgets import QAction  # type: ignore
 
 from .plugin_logger import PluginLogger
-# Initialize Qt resources from file resources.py
-from .resources import *
 # Import the code for the dialog
 from .survey_app_dialog import SurveyAppDialog
 from .utils.demand_utils import check_and_split_demand_points, add_missing_addresses_from_gov

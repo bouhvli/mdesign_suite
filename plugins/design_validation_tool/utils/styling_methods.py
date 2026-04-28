@@ -1,112 +1,99 @@
 import os
 from qgis.core import (  # type: ignore
     QgsVectorLayer, QgsFillSymbol, QgsSingleSymbolRenderer,
-    QgsPalLayerSettings, QgsTextFormat, QgsUnitTypes,
-    QgsVectorLayerSimpleLabeling
-    )
+    QgsPalLayerSettings, QgsTextFormat, QgsTextBufferSettings, QgsUnitTypes,
+    QgsVectorLayerSimpleLabeling,
+)
 from PyQt5.QtGui import QColor, QFont
 
 
 def apply_style_from_qml(layer, qml_path):
-    """Apply style from QML file"""
     if os.path.exists(qml_path):
-        success = layer.loadNamedStyle(qml_path)
-        if success:
+        if layer.loadNamedStyle(qml_path):
             layer.triggerRepaint()
-        else:
-            apply_violation_style(layer)  # Fallback
-    else:
-        apply_violation_style(layer)  # Fallback
+            return
+    apply_violation_style(layer)
+
 
 def apply_violation_style(layer):
-    """Apply transparent buffer with red boundaries style to the layer"""
+    """Semi-transparent fill with a solid border. Colour is overridden per feature
+    type by shape_file_creation.py after this function runs."""
     try:
-        # Create symbol with transparent red fill and solid red border
         symbol = QgsFillSymbol.createSimple({
-            'color': '255,0,0,40',
-            'color_border': '255,0,0,255',
-            'width_border': '0.8',
+            'color': '255,0,0,25',
+            'outline_color': '200,0,0,255',
+            'outline_width': '0.8',
             'style': 'solid',
-            'style_border': 'solid'
+            'outline_style': 'solid',
         })
-        
-        # Create renderer and apply to layer
-        renderer = QgsSingleSymbolRenderer(symbol)
-        layer.setRenderer(renderer)
-        
-        # Commit changes and trigger repaint
+        layer.setRenderer(QgsSingleSymbolRenderer(symbol))
         layer.triggerRepaint()
-        #print("Style applied successfully to violation layer")
-        
     except Exception as e:
-        #print(f"Error applying style: {str(e)}")
-        # Fallback: use simple styling
-        layer.loadNamedStyle('')  # Reset any existing style
+        print(f"Error applying violation style: {e}")
         layer.triggerRepaint()
+
 
 def setup_labels(layer):
-    """Setup labels for the given QGIS vector layer using the 'details' attribute.
-
-    Args:
-        layer (QgsVectorLayer): The vector layer to configure labels for.
-
-    Returns:
-        bool: True if labels were configured successfully, False otherwise.
-    """
+    """Two-line label: bold rule_id on top, plain description below.
+    Only visible when zoomed in to avoid crowding the map."""
     try:
-        # Check if layer is valid and is a vector layer
         if not isinstance(layer, QgsVectorLayer) or not layer.isValid():
-            #print("Error: Invalid or non-vector layer provided")
             return False
 
-        # Verify that the 'details' field exists
-        if 'details' not in [field.name() for field in layer.fields()]:
-            #print("Error: 'details' field not found in layer attributes")
+        field_names = [f.name() for f in layer.fields()]
+        rule_field = 'rule_id' if 'rule_id' in field_names else None
+        # Accept the memory-layer name and the shapefile-truncated variants so
+        # labels work whether the layer was loaded from the .shp or built in memory.
+        desc_field = next(
+            (n for n in ('descr', 'description', 'descriptio') if n in field_names),
+            None,
+        )
+        if not rule_field or not desc_field:
             return False
 
-        # Label settings
         settings = QgsPalLayerSettings()
-        settings.fieldName = 'details'
-        settings.isExpression = False
+        settings.fieldName = (
+            f"coalesce(\"{rule_field}\", '') || '  ' || coalesce(\"{desc_field}\", '')"
+        )
+        settings.isExpression = True
 
-        # Configure text format
+        font = QFont("Arial", 9, QFont.Bold)
+
         text_format = QgsTextFormat()
-        text_format.setSize(8)
-        text_format.setSizeUnit(QgsUnitTypes.RenderPoints)  # Explicitly set to points
-        text_format.setColor(QColor(0, 0, 0))  # Red labels
-
-        # Use QFont to make text bold and set a font family
-        font = QFont("Arial", 28)  # Specify font family for consistency
-        font.setBold(True)
         text_format.setFont(font)
+        text_format.setSize(9)
+        text_format.setSizeUnit(QgsUnitTypes.RenderPoints)
+        text_format.setColor(QColor(30, 30, 30))
+
+        halo = QgsTextBufferSettings()
+        halo.setEnabled(True)
+        halo.setSize(1.0)
+        halo.setSizeUnit(QgsUnitTypes.RenderMillimeters)
+        halo.setColor(QColor(255, 255, 255, 220))
+        text_format.setBuffer(halo)
 
         settings.setFormat(text_format)
 
-        # Dynamic placement based on geometry type
-        geometry_type = layer.geometryType()
-        if geometry_type == 0:  # Point
-            settings.placement = QgsPalLayerSettings.OverPoint
-            settings.quadOffset = QgsPalLayerSettings.QuadrantAbove
-        elif geometry_type == 1:  # Line
-            settings.placement = QgsPalLayerSettings.Line
-        elif geometry_type == 2:  # Polygon
-            settings.placement = QgsPalLayerSettings.AroundPoint
-        else:
-            #print("Warning: Unknown geometry type, using default placement")
-            settings.placement = QgsPalLayerSettings.OverPoint
+        settings.placement = QgsPalLayerSettings.Horizontal
+        settings.centroidInside = True
+        settings.placeDirectionSymbol = False
+        settings.multilineAlign = QgsPalLayerSettings.MultiCenter
 
-        # Set label priority (0-10, higher is more important)
-        settings.priority = 5  # Moderate priority for labels
+        settings.displayAll = True
+        settings.priority = 10
 
-        # Apply labeling
+        # Hide labels when zoomed out, show when zoomed in.
+        # Visible between 1:1 (very close) and 1:10000.
+        settings.scaleVisibility = True
+        settings.minimumScale = 10000
+        settings.maximumScale = 1
+
         layer.setLabeling(QgsVectorLayerSimpleLabeling(settings))
         layer.setLabelsEnabled(True)
-
-        # Trigger repaint (note: layer must be added to a map canvas)
         layer.triggerRepaint()
 
         return True
 
     except Exception as e:
-        print(f"Error setting up labels: {str(e)}")
+        print(f"Error setting up labels: {e}")
         return False
