@@ -1,0 +1,229 @@
+/* Base Dialog Styling */
+QDialog {
+    font-family: "Geist", "Segoe UI", Arial, sans-serif;
+    font-size: 9pt;
+    background-color: #ffffff;
+    color: #333333;
+}
+
+/* Label Styling */
+QLabel {
+    font-weight: 500;
+    min-width: 180px;
+    padding: 5px 0px;
+}
+
+/* Group Box Styling */
+QGroupBox {
+    font-weight: 600;
+    font-size: 9.5pt;
+    border: 1px solid #c0c0c0;
+    border-radius: 4px;
+    margin-top: 10px;
+    padding-top: 10px;
+    background-color: #ffffff;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0px 8px;
+    background-color: #ffffff;
+    color: #333333;
+}
+
+/* Line Edit Styling */
+QLineEdit {
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    padding: 5px 8px;
+    background-color: #ffffff;
+    font-size: 9pt;
+    min-height: 25px;
+}
+
+QLineEdit:focus {
+    border-color: #4CAF50;
+    background-color: #f8f8f8;
+}
+
+QLineEdit::placeholder {
+    color: #999999;
+    font-style: italic;
+}
+
+/* Combo Box Styling */
+QComboBox {
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    padding: 5px 8px;
+    background-color: #ffffff;
+    font-size: 9pt;
+    min-height: 20px;
+    min-width: 285px;
+}
+
+QComboBox:focus {
+    border-color: #4CAF50;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid #666666;
+    width: 0px;
+    height: 0px;
+}
+
+QComboBox QAbstractItemView {
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    background-color: #ffffff;
+    selection-background-color: #e0e0e0;
+    outline: none;
+}
+
+/* File Widget Styling */
+QgsFileWidget {
+    min-width: 285px;
+    min-height: 30px;
+}
+
+QgsFileWidget QLineEdit {
+    min-width: 250px;
+}
+
+QgsFileWidget QToolButton {
+    background-color: #f0f0f0;
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-weight: 500;
+}
+
+QgsFileWidget QToolButton:hover {
+    background-color: #e0e0e0;
+}
+
+QgsFileWidget QToolButton:pressed {
+    background-color: #d0d0d0;
+}
+
+/* Button Box Styling */
+QDialogButtonBox {
+    margin-top: 10px;
+}
+
+/* Push Button Styling */
+QPushButton {
+    background-color: #f0f0f0;
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    padding: 5px 10px;
+    font-weight: 500;
+    font-size: 9pt;
+    min-height: 25px;
+}
+
+QPushButton:hover {
+    background-color: #e0e0e0;
+}
+
+QPushButton:pressed {
+    background-color: #d0d0d0;
+}
+
+QPushButton:focus {
+    border-color: #4CAF50;
+}
+
+/* Specific Button Types */
+QPushButton[text="OK"],
+QPushButton[text="Ok"] {
+    background-color: #4CAF50;
+    color: white;
+    border-color: #45a049;
+}
+
+QPushButton[text="OK"]:hover,
+QPushButton[text="Ok"]:hover {
+    background-color: #45a049;
+}
+
+QPushButton[text="Cancel"] {
+    background-color: #f0f0f0;
+    color: #333333;
+}
+
+QPushButton[text="Cancel"]:hover {
+    background-color: #e0e0e0;
+}
+
+/* Progress Bar Styling */
+QProgressBar {
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    background-color: #f0f0f0;
+    text-align: center;
+    color: #333333;
+}
+
+QProgressBar::chunk {
+    background-color: #4CAF50;
+    border-radius: 2px;
+}
+
+/* Text Edit Styling */
+QTextEdit {
+    font-family: "Geist Mono", "Courier New", monospace;
+    font-size: 8.5pt;
+    background-color: #f8f8f8;
+    border: 1px solid #c0c0c0;
+    border-radius: 3px;
+    padding: 5px;
+}
+
+QTextEdit:read-only {
+    background-color: #f8f8f8;
+    color: #666666;
+}
+
+/* Check Box Styling */
+QCheckBox {
+    font-weight: 400;
+    spacing: 5px;
+}
+
+QCheckBox::indicator {
+    width: 13px;
+    height: 13px;
+}
+
+QCheckBox::indicator:unchecked {
+    border: 1px solid #c0c0c0;
+    border-radius: 2px;
+    background-color: #ffffff;
+}
+
+QCheckBox::indicator:checked {
+    border: 1px solid #4CAF50;
+    border-radius: 2px;
+    background-color: #4CAF50;
+}
+
+/* Layout Spacing */
+QVBoxLayout, QHBoxLayout {
+    spacing: 5px;
+    margin: 5px;
+}
+
+/* Spacer Styling */
+QSpacerItem {
+    min-height: 10px;
+}
