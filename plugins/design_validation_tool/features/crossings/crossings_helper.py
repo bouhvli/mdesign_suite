@@ -4,7 +4,7 @@ import math
 
 
 def _extract_points_from_geometry(geometry: QgsGeometry):
-    """Extract points from various geometry types"""
+    """Extract points from various geometry types """
     points = []
 
     if geometry.isMultipart():
